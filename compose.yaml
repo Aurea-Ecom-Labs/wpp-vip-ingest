@@ -1,0 +1,66 @@
+name: wpp-vip-ingest
+
+services:
+  init-data:
+    image: ${WPP_IMAGE:-wpp-vip-ingest:local}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown -R 1000:1000 /data && chmod 700 /data"]
+    volumes:
+      - wpp-data:/data
+    restart: "no"
+
+  worker:
+    image: ${WPP_IMAGE:-wpp-vip-ingest:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    user: "1000:1000"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=1777
+    volumes:
+      - wpp-data:/data
+      - type: bind
+        source: ${WPP_SOURCE_DIR:-./source}
+        target: /source
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      WPP_DATA_DIR: /data
+      WPP_SOURCE: /source/source.json
+      WPP_GROUPS: ${WPP_GROUPS:-}
+      WPP_OPERATORS: ${WPP_OPERATORS:-}
+      WPP_RUNTIME_MODE: container
+      WPP_TRANSPORT: ${WPP_TRANSPORT:-live}
+      WPP_ADMISSION_TIMEOUT_MS: ${WPP_ADMISSION_TIMEOUT_MS:-30000}
+      WPP_FAKE_MODE: ${WPP_FAKE_MODE:-success}
+    command: ["worker"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    deploy:
+      replicas: 1
+    healthcheck:
+      test: ["CMD", "node", "src/cli.mjs", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 150s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  wpp-data:
+    name: ${WPP_DATA_VOLUME:-wpp-vip-ingest_wpp-data}

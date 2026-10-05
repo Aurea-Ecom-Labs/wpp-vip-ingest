@@ -5,5 +5,8 @@ data/
 *.db-wal
 *.log
 .env
+.env.*
+!.env.example
+source/
 .DS_Store
 __pycache__/

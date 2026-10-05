@@ -1,55 +1,33 @@
-# macOS deployment
+# macOS host
 
-Install Node.js 24 or later and Python 3. Install dependencies with `npm ci`.
-Run pairing manually before installing the LaunchAgent.
-Use absolute paths. launchd does not load your interactive shell profile.
+Docker Compose is the only supported live runtime on macOS. Docker Desktop runs the Linux container in its Linux VM. Install and start Docker Desktop, then check that `docker compose version` works before you use the worker.
 
-```sh
-export WPP_DATA_DIR="$HOME/Library/Application Support/wpp-vip-ingest"
-export WPP_GROUPS="123456789@g.us"
-export WPP_OPERATORS="5511777777777@s.whatsapp.net"
-npm run pair
-bash deploy/install-launchagent.sh
-```
+**Before / after:** Before this change, launchd owned the native worker process. Now Compose owns the worker process. The old LaunchAgent installer is disabled; it does not stop an already installed LaunchAgent.
 
-The script writes `~/Library/LaunchAgents/com.aurea.wpp-vip-ingest.plist`.
-Its label is `com.aurea.wpp-vip-ingest`.
-Its data directory is `WPP_DATA_DIR` and its source is `WPP_SOURCE`, or `source.json` in that data directory.
-Create the source with only `phone` and `group` fields.
-
-Inspect service status:
+Follow [Docker Compose operations](docker.md) to configure `.env`, the read-only `source/` directory, and the persistent data volume. Use these commands from the repository root:
 
 ```sh
-launchctl print "gui/$(id -u)/com.aurea.wpp-vip-ingest"
+cp .env.example .env
+chmod 600 .env
+mkdir -p source
+printf '[]\n' > source/source.json
+docker compose build
+docker compose run --rm worker pair
+docker compose up -d worker
+docker compose exec worker node src/cli.mjs runtime-status
+docker compose exec worker node src/cli.mjs resume
 ```
 
-Stop before a human check or retry:
+Replace the sample group and operator values in `.env` before live use. Pairing closes its session after credentials are saved. Admission remains paused until `resume` succeeds.
 
-```sh
-launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.aurea.wpp-vip-ingest.plist"
-node src/cli.mjs status
-node src/cli.mjs check JOB_ID
-```
+Stop the worker before `check`, `retry`, or `pair`. The container entry wrapper holds one OS-managed lock for each live command. Do not run `node src/cli.mjs worker` or use the old LaunchAgent installer.
 
-After review, start it again:
+The LaunchAgent files remain only for migration history. `deploy/install-launchagent.sh` now stops with a deprecation message. If a LaunchAgent is already installed, the owner must stop and disable it before pairing or starting Compose. This repository does not alter launchd on the Mac.
 
-```sh
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.aurea.wpp-vip-ingest.plist"
-```
+Docker Desktop availability depends on its login, startup, and sleep settings. A sleeping Mac cannot process work. macOS Docker Desktop startup, pairing, Business app behavior, and official API compatibility need an owner trial. CI on a macOS Node runner would not prove Docker Desktop behavior.
 
-The LaunchAgent starts at user login and restarts only after a nonzero exit.
-It uses a 60-second restart throttle. Logout exits with code zero and requires manual pairing.
-Existing uncertain and invitation-required jobs remain stopped after restart.
+## Expected behavior
 
-Logs are in the data directory. Rotate them as needed. They do not contain exported WhatsApp events.
-The `status` command prints job phone numbers for the local operator. Do not publish that output.
-Protect the data directory and backups. Do not commit credentials, source files, or databases.
-
-The worker creates `worker.lock` in the data directory. A crash can leave this directory behind.
-Stop launchd and check that no worker or review command is active before removing the stale lock.
-Then bootstrap again. Do not remove the lock from a running worker.
-
-If the Mac sleeps, the process cannot continue reliable network work. Confirm membership after interruptions.
-Use macOS power settings suitable for the required availability. A user LaunchAgent is not a pre-login service.
-These instructions and the generated plist were checked structurally on Linux.
-launchctl, pairing, and macOS runtime behavior still need tests on your Mac.
+- Given Docker Desktop is stopped, when an operator runs Compose, then the worker does not start.
+- Given a new container volume, when pairing succeeds, then admission remains paused.
+- Given a session logout, when Docker restarts the worker, then it does not show a QR or reconnect until explicit pairing.

@@ -30,6 +30,7 @@ function fixture(t, mode = 'ok', options = {}) {
   };
   const service = new Admission({ socket, allowedGroups: [group], botIds: ['5511888888888@s.whatsapp.net'],
     operators: ['5511777777777@s.whatsapp.net'], timeoutMs: 15, ...options });
+  service.runtimeState.updateControl({ admission: 'resumed' });
   t.after(() => service.close());
   const id = service.enqueue({ phone, group });
   return { service, id, socket, participants, adds: () => adds, reads: () => reads };

@@ -6,9 +6,13 @@
   "engines": { "node": ">=24.0.0" },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "test:containers": "WPP_REQUIRE_DOCKER_TESTS=1 node --test test/container.test.mjs",
+    "test:deploy": "python3 -m unittest discover -s test -p 'deploy_test.py'",
     "demo": "node src/cli.mjs demo",
-    "start": "node src/cli.mjs worker",
-    "pair": "node src/cli.mjs pair"
+    "start": "docker compose up -d worker",
+    "pair": "docker compose run --rm worker pair",
+    "health": "docker compose exec worker node src/cli.mjs health",
+    "runtime-status": "docker compose exec worker node src/cli.mjs runtime-status"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc13",
