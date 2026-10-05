@@ -4,9 +4,9 @@ Status: CODE IMPLEMENTATION IN FEATURE BRANCH; ACCEPTANCE AND OWNER SETUP INCOMP
 
 The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
 
-This branch is `feat/docker-ci-deployment`. Implementation commits are `f81d25c` (worker, container, and host transaction) and `ef0baf8` (CI, publish, and manual deploy workflows). Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+This branch is `feat/docker-ci-deployment`. Implementation commits are `f81d25c` (worker, container, and host transaction), `ef0baf8` (CI, publish, and manual deploy workflows), and `0573117` (volume initialization, bounded repeated signals, and fake Tailscale command tests). Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local unit, CLI, and fake deployment tests pass. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
+Local `npm test` passes 46 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 16 tests. The pinned Baileys import succeeds. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -38,7 +38,7 @@ Stop only the dependent live deployment work if these facts are missing. Continu
 
 Acceptance: baseline reproduced; external unknowns listed; no production operation performed.
 
-**Code status:** baseline tests were reproduced. Owner facts above remain unresolved. The branch has not performed production operations.
+**Code status:** baseline tests were reproduced. The installed Baileys package was inspected for `DisconnectReason.loggedOut` and `connection.update` behavior. Owner facts above remain unresolved. The branch has not performed production operations.
 
 ## Phase 1: extract a testable worker lifecycle
 
@@ -112,7 +112,7 @@ Acceptance: untrusted PR cannot publish or join tailnet; both platform images te
 
 ## Phase 6: server deployment transaction
 
-**Code status:** fixed host scripts and a fake deployment adapter are present. Twelve local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, and idempotency. No host Compose integration trial has run.
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. Sixteen local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, and the fixed remote command. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
