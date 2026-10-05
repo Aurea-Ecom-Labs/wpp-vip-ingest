@@ -151,7 +151,7 @@ jobs:
             if [[ -f "$RUNNER_TEMP/deployment-status.json" ]]; then
               echo '- Server transaction status:'
               echo '```json'
-              jq '{transactionId,outcome,phase,candidateDigest,sourceSha,previousDigest,updatedAt}' "$RUNNER_TEMP/deployment-status.json"
+              jq '{transactionId,outcome,phase,candidateDigest,sourceSha,previousDigest,readiness,updatedAt}' "$RUNNER_TEMP/deployment-status.json"
               echo '```'
             else
               echo '- Server transaction status: unavailable; check the host locally before retry.'

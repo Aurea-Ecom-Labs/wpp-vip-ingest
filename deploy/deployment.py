@@ -19,6 +19,7 @@ DIGEST_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 SCHEMA_LABEL = 'com.aurea.wpp.database-schema'
 RUNTIME_SCHEMA_LABEL = 'com.aurea.wpp.runtime-state-schema'
+LIFECYCLE_STATES = {'starting', 'connecting', 'ready', 'draining', 'needs_pairing', 'failed'}
 
 
 class DeploymentError(Exception):
@@ -61,6 +62,23 @@ def load_state(path):
     if value.get('version') != 1:
         raise DeploymentError('Unsupported deployment state version')
     return value
+
+
+def readiness_summary(value):
+    if not value:
+        return {'state': 'not_running'}
+    snapshot = value.get('status') or {}
+    control = value.get('control') or {}
+    lifecycle = snapshot.get('lifecycle')
+    session = control.get('session')
+    admission = control.get('admission')
+    return {
+        'healthy': value.get('health', {}).get('healthy') is True,
+        'lifecycle': lifecycle if lifecycle in LIFECYCLE_STATES else 'unknown',
+        'session': session if session in {'active', 'needs_pairing'} else 'unknown',
+        'admission': admission if admission in {'paused', 'resumed'} else 'unknown',
+        'heartbeatAt': snapshot.get('heartbeatAt') if isinstance(snapshot.get('heartbeatAt'), str) else None,
+    }
 
 
 class DockerCompose:
@@ -436,6 +454,7 @@ class Deployment:
                         status.get('control', {}).get('session') != 'active' or
                         not status.get('health', {}).get('healthy')):
                     raise DeploymentError('Candidate is not ready; pairing may be required')
+                transaction['readiness'] = readiness_summary(status)
                 transaction['phase'] = 'candidate_verified'
                 self._save(transaction)
 
@@ -444,6 +463,7 @@ class Deployment:
                     status = self.docker.status()
                     if not status or status.get('control', {}).get('admission') != 'resumed':
                         raise DeploymentError('Candidate did not confirm the previous resumed mode')
+                    transaction['readiness'] = readiness_summary(status)
                 transaction['phase'] = 'completed'
                 transaction['outcome'] = 'completed'
                 transaction['lastSuccessful'] = {
@@ -467,7 +487,13 @@ class Deployment:
 def status(root):
     path = Path(root).resolve() / 'state' / 'deployment.json'
     value = load_state(path)
-    return value or {'version': 1, 'outcome': 'not_started'}
+    transaction = value or {'version': 1, 'outcome': 'not_started'}
+    readiness = None
+    try:
+        readiness = readiness_summary(DockerCompose(root).status())
+    except Exception:
+        readiness = {'state': 'unavailable'}
+    return {**transaction, 'readiness': readiness or transaction.get('readiness')}
 
 
 def main(argv=None):

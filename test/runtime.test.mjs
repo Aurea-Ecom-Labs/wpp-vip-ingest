@@ -299,6 +299,32 @@ test('logout before ready persists pairing and blocks future connections', async
   await replacementRun;
 });
 
+test('non-logout connection failure exits for the Compose restart policy', async t => {
+  const directory = temporaryDirectory(t);
+  const dataDir = join(directory, 'data');
+  const sourcePath = join(directory, 'source.json');
+  writeFileSync(sourcePath, '[]');
+  const events = [];
+  const runtime = new WorkerRuntime({
+    dataDir,
+    sourcePath,
+    allowedGroups: ['123456789@g.us'],
+    heartbeatMs: 20,
+    onOutput: event => events.push(event),
+    transport: async () => { throw new Error('Synthetic network failure'); },
+  });
+
+  await assert.rejects(runtime.run(), /Transport connection failed/);
+  assert.ok(events.some(event => event.event === 'transport_connect_failed'));
+  const control = new Admission({
+    dbPath: join(dataDir, 'jobs.db'),
+    dataDir,
+    allowedGroups: ['123456789@g.us'],
+  });
+  t.after(() => control.close());
+  assert.equal(control.runtimeState.readControl().admission, 'paused');
+});
+
 test('pause during an addition drains it and leaves later jobs queued', async t => {
   const directory = temporaryDirectory(t);
   const dataDir = join(directory, 'data');

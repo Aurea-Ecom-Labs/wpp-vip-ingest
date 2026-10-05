@@ -60,7 +60,7 @@ The worker claims a job before network access. The WhatsApp result must identify
 
 Pause stops new imports, command receipts, and claims. Current work drains for at most 60 seconds at shutdown; each admission network call has a 30-second timeout. If the process cannot drain, the container stop limit ends it. The persisted `in_flight` state becomes `uncertain` on the next exclusive owner start. It is not reset.
 
-Logout sets `needs_pairing` and pauses admission. A worker with this marker stays visible and does not connect or generate a QR. Pairing requires the worker to be stopped and the same volume. Credential writes must finish before the marker clears. Admission remains paused after pairing.
+Logout or missing pairing credentials sets `needs_pairing` and pauses admission. A worker with this marker stays visible and does not connect or generate a QR. Pairing requires the worker to be stopped and the same volume. Credential writes must finish before the marker clears. Admission remains paused after pairing. Other transport failures exit nonzero after drain, so the Compose restart policy can reconnect.
 
 ## Local deployment and verification
 

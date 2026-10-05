@@ -143,7 +143,7 @@ The implementation is new code. It deliberately omits the collector and export c
 Baileys is pinned to `7.0.0-rc13`, the version inspected in the upstream project.
 
 The live adapter uses Baileys file-based authentication for this trial. The data volume is private and the entry wrapper uses `flock` on a stable lock file. The operating system releases the lock when the process exits. Do not remove the lock file.
-Connection loss moves the worker to a visible failed state. Logout persists `needs_pairing`, keeps credentials, and blocks reconnects until explicit pairing. No automatic credential deletion or retry is implemented.
+A non-logout transport failure drains and exits nonzero; Compose may restart the process. An interrupted `in_flight` job becomes `uncertain` and is not retried. Logout or missing pairing credentials persists `needs_pairing`, keeps credentials, and blocks reconnects until explicit pairing. No automatic credential deletion or uncertain-job retry is implemented.
 
 The prototype covers standalone groups first. Community propagation is not implemented or assumed.
 The official API number's linked-device compatibility must be checked in a live trial.

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deploy.deployment import Deployment, DeploymentError, IMAGE_PREFIX
+from deploy.deployment import Deployment, DeploymentError, IMAGE_PREFIX, readiness_summary
 
 
 SOURCE_A = 'a' * 40
@@ -129,6 +129,21 @@ class DeploymentTests(unittest.TestCase):
             self.deploy('latest; touch /tmp/bad', SOURCE_A, 1)
         self.assertEqual(self.docker.events, [])
 
+    def test_readiness_summary_contains_only_safe_runtime_fields(self):
+        summary = readiness_summary({
+            'control': {'session': 'active', 'admission': 'paused'},
+            'status': {'lifecycle': 'ready', 'heartbeatAt': '2026-10-05T00:00:00Z', 'phone': '+5511999999999'},
+            'health': {'healthy': True},
+        })
+        self.assertEqual(summary, {
+            'healthy': True,
+            'lifecycle': 'ready',
+            'session': 'active',
+            'admission': 'paused',
+            'heartbeatAt': '2026-10-05T00:00:00Z',
+        })
+        self.assertNotIn('phone', str(summary))
+
 
     def test_success_preserves_an_intentional_pause(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
@@ -140,6 +155,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn(('resume', f'{IMAGE_PREFIX}@{DIGEST_A}'), self.docker.events)
         self.assertEqual(result['lastSuccessful']['digest'], DIGEST_A)
         self.assertEqual(result['uncertainJobCount'], 2)
+        self.assertEqual(result['readiness']['lifecycle'], 'ready')
+        self.assertEqual(result['readiness']['admission'], 'paused')
 
     def test_fresh_volume_is_initialized_before_worker_start(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)

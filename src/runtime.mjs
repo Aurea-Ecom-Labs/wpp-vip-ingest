@@ -106,59 +106,79 @@ export class WorkerRuntime {
         this.lifecycle = 'needs_pairing';
         this.publishStatus();
         await this.waitUntilStopped();
-        return;
-      }
-
-      validateRuntimeConfiguration({ allowedGroups: this.allowedGroups, sourcePath: this.sourcePath });
-      this.lifecycle = 'connecting';
-      this.publishStatus();
-      try {
-        this.session = await this.transport({
-          authDir: this.authDir,
-          pair: false,
-          timers: this.timers,
-          onDisconnect: event => this.handleDisconnect(event),
-        });
-      } catch {
-        this.lifecycle = this.admission.runtimeState.readControl().session === 'needs_pairing'
-          ? 'needs_pairing' : 'failed';
-        if (this.lifecycle === 'failed') this.onOutput({ event: 'transport_connect_failed' });
-        this.publishStatus();
-        await this.waitUntilStopped();
-        return;
-      }
-
-      if (this.lifecycle === 'needs_pairing' || this.lifecycle === 'failed') {
-        await this.closeSession();
-        await this.waitUntilStopped();
-        return;
-      }
-
-      this.admission.socket = this.session.socket;
-      this.admission.botIds = new Set([
-        this.session.socket.user?.id,
-        this.session.socket.user?.lid,
-      ].filter(Boolean).map(normalizeJid));
-      this.session.socket.ev.on('messages.upsert', upsert => this.receive(upsert));
-      this.lifecycle = 'ready';
-      this.publishStatus();
-
-      while (!this.stopping) {
-        if (this.lifecycle !== 'ready') {
-          await this.wait(this.pollMs);
-          continue;
+      } else {
+        try {
+          validateRuntimeConfiguration({ allowedGroups: this.allowedGroups, sourcePath: this.sourcePath });
+        } catch {
+          this.lifecycle = 'failed';
+          this.onOutput({ event: 'configuration_invalid' });
+          this.publishStatus();
+          await this.waitUntilStopped();
         }
-        await this.cycle();
-        if (!this.stopping) await this.wait(this.pollMs);
+
+        if (this.lifecycle !== 'failed') {
+          this.lifecycle = 'connecting';
+          this.publishStatus();
+          const connected = await this.connectSession();
+          if (!connected && this.lifecycle === 'needs_pairing') await this.waitUntilStopped();
+
+          while (connected && !this.stopping) {
+            if (this.lifecycle !== 'ready') {
+              await this.wait(this.pollMs);
+              continue;
+            }
+            await this.cycle();
+            if (!this.stopping) await this.wait(this.pollMs);
+          }
+        }
       }
     } catch {
-      this.lifecycle = 'failed';
-      this.onOutput({ event: 'runtime_failed' });
-      this.publishStatus();
-      await this.waitUntilStopped();
+      if (!this.stopping) {
+        this.lifecycle = 'failed';
+        this.onOutput({ event: 'runtime_failed' });
+        this.publishStatus();
+        await this.waitUntilStopped();
+      } else if (!this.failure) {
+        this.failure = new Error('Runtime failed during shutdown');
+      }
     } finally {
       await this.shutdown();
     }
+    if (this.failure) throw this.failure;
+  }
+
+  async connectSession() {
+    try {
+      this.session = await this.transport({
+        authDir: this.authDir,
+        pair: false,
+        timers: this.timers,
+        onDisconnect: event => this.handleDisconnect(event),
+      });
+    } catch {
+      if (this.admission.runtimeState.readControl().session === 'needs_pairing') {
+        this.lifecycle = 'needs_pairing';
+        this.publishStatus();
+        return false;
+      }
+      this.fail('transport_connect_failed');
+      return false;
+    }
+
+    const control = this.admission.runtimeState.readControl();
+    if (control.session === 'needs_pairing' || this.lifecycle === 'failed') {
+      await this.closeSession();
+      return false;
+    }
+    this.admission.socket = this.session.socket;
+    this.admission.botIds = new Set([
+      this.session.socket.user?.id,
+      this.session.socket.user?.lid,
+    ].filter(Boolean).map(normalizeJid));
+    this.session.socket.ev.on('messages.upsert', upsert => this.receive(upsert));
+    this.lifecycle = 'ready';
+    this.publishStatus();
+    return true;
   }
 
   async cycle() {
@@ -228,11 +248,16 @@ export class WorkerRuntime {
     if (loggedOut) {
       this.admission.runtimeState.updateControl({ session: 'needs_pairing' });
       this.lifecycle = 'needs_pairing';
+      this.publishStatus();
     } else {
-      this.lifecycle = 'failed';
+      this.fail('transport_disconnected');
     }
-    this.publishStatus();
     if (this.session) void this.closeSession();
+  }
+
+  fail(event) {
+    this.onOutput({ event });
+    this.stop(new Error('Transport connection failed'));
   }
 
   async closeSession() {
@@ -262,12 +287,16 @@ export class WorkerRuntime {
     while (!this.stopping) await this.wait(this.pollMs);
   }
 
-  stop() {
-    if (this.stopping) return;
+  stop(failure = null) {
+    if (this.stopping) {
+      if (failure && !this.failure) this.failure = failure;
+      return;
+    }
     this.stopping = true;
+    this.failure = failure;
     this.stopRequestedAt = this.clock();
     this.forceExitTimer = this.timers.setTimeout(() => this.onDrainTimeout(), this.shutdownLimitMs);
-    this.lifecycle = 'draining';
+    this.lifecycle = failure ? 'failed' : 'draining';
     this.publishStatus();
     this.pendingWake?.();
   }

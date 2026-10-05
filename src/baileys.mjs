@@ -4,7 +4,10 @@ export async function connect({ authDir, pair = false, onDisconnect = () => {}, 
     await import('@whiskeysockets/baileys');
   const { default: pino } = await import('pino');
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  if (!pair && !state.creds.registered) throw new Error('Pair in a terminal before starting the worker');
+  if (!pair && !state.creds.registered) {
+    await onDisconnect({ reason: 'Pairing is required', loggedOut: true });
+    throw new Error('Pair in a terminal before starting the worker');
+  }
   const logger = pino({ level: 'silent' });
   const socket = makeWASocket({
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
