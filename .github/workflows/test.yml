@@ -1,0 +1,13 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test
+      - run: npm run demo
+      - run: bash -n deploy/install-launchagent.sh
