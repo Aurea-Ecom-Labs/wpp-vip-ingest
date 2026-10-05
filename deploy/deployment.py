@@ -239,6 +239,9 @@ class DockerCompose:
     def start(self, image):
         self.compose('up', '-d', '--no-deps', '--force-recreate', 'worker', image=image, timeout=300)
 
+    def initialize_volume(self, image):
+        self.compose('run', '--rm', '--no-deps', 'init-data', image=image, timeout=300)
+
     def wait_ready(self, timeout=180):
         deadline = self.clock() + timeout
         last_status = None
@@ -420,6 +423,10 @@ class Deployment:
                 self._save(transaction)
                 disrupted = True
                 self.docker.set_configured_image(image)
+                if not current:
+                    transaction['phase'] = 'initializing_data_volume'
+                    self._save(transaction)
+                    self.docker.initialize_volume(image)
                 self.docker.start(image)
                 transaction['phase'] = 'candidate_started'
                 self._save(transaction)

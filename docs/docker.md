@@ -190,7 +190,7 @@ Production Compose configuration must use the public GHCR image by digest, not b
 WPP_IMAGE=ghcr.io/aurea-ecom-labs/wpp-vip-ingest@sha256:<64 lowercase hex characters>
 ```
 
-The deploy workflow selects only a digest from a successful trusted `main` publish record. It does not accept a caller-supplied image name. The host script validates the digest, image labels, schema, runtime, source mount, and free space. It serializes deployment with a stable host lock and stores transaction state outside the image under `state/deployment.json`.
+The deploy workflow selects only a digest from a successful trusted `main` publish record. It does not accept a caller-supplied image name. The host script validates the digest, image labels, schema, runtime, source mount, and free space. It serializes deployment with a stable host lock and stores transaction state outside the image under `state/deployment.json`. When no worker is running, it runs `init-data` on the configured volume before the candidate starts.
 
 After the owner chooses and verifies a non-root deployment account, install the same reviewed commit under the fixed path. Replace `DEPLOY_USER` with that configured account:
 

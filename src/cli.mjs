@@ -1,11 +1,11 @@
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from 'node:fs';
-import { resolve, join, relative, sep } from 'node:path';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { resolve, join, relative, sep, dirname, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Admission, normalizeJid } from './admission.mjs';
 import { readSource } from './source.mjs';
 import { connect } from './baileys.mjs';
 import { connectFake } from './fake-transport.mjs';
-import { WorkerRuntime, validateRuntimeConfiguration } from './runtime.mjs';
+import { attachShutdownSignals, WorkerRuntime, validateRuntimeConfiguration } from './runtime.mjs';
 import { readHealth, readStatusSnapshot, runtimeProcessIsAlive } from './runtime-state.mjs';
 
 const output = value => console.log(JSON.stringify(value));
@@ -122,9 +122,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       onOutput: output,
       onDrainTimeout: () => process.exit(1),
     });
-    process.once('SIGINT', () => runtime.stop());
-    process.once('SIGTERM', () => runtime.stop());
-    await runtime.run();
+    const removeSignals = attachShutdownSignals(runtime, process,
+      () => output({ event: 'shutdown_already_in_progress' }));
+    try { await runtime.run(); }
+    finally { removeSignals(); }
     return;
   }
 
@@ -146,8 +147,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     if (action === 'backup') {
       const destination = resolve(args[0] ?? '');
       if (!args[0]) throw new Error('Set a backup destination directory');
-      const dataRelative = relative(config.dataDir, destination);
-      const destinationRelative = relative(destination, config.dataDir);
+      const realDataDir = realpathSync(config.dataDir);
+      const realDestination = join(realpathSync(dirname(destination)), basename(destination));
+      const dataRelative = relative(realDataDir, realDestination);
+      const destinationRelative = relative(realDestination, realDataDir);
       const destinationInsideData = !dataRelative.startsWith(`..${sep}`) && dataRelative !== '..';
       const dataInsideDestination = !destinationRelative.startsWith(`..${sep}`) && destinationRelative !== '..';
       if (destinationInsideData || dataInsideDestination) {

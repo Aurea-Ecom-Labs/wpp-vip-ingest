@@ -85,6 +85,9 @@ jobs:
       group: wpp-vip-ingest-production
       cancel-in-progress: false
     steps:
+      - name: Check out the trusted workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Validate configured target
         id: target
         env:
@@ -100,6 +103,7 @@ jobs:
 
       - name: Join the tailnet with workload identity
         id: tailscale
+        # This pinned action has a post step that logs out when the job ends.
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
         with:
           oauth-client-id: ${{ secrets.TS_FEDERATED_CLIENT_ID }}
@@ -118,9 +122,7 @@ jobs:
           ALLOW_ROLLBACK: ${{ needs.resolve.outputs.rollback }}
         run: |
           set -euo pipefail
-          args=("$IMAGE_DIGEST" "$SOURCE_SHA" "$RUN_NUMBER")
-          if [[ "$ALLOW_ROLLBACK" == "true" ]]; then args+=(--rollback); fi
-          tailscale ssh "$TARGET" /opt/wpp-vip-ingest/deploy/deploy-container.sh "${args[@]}"
+          bash deploy/tailscale-deploy.sh "$TARGET" "$IMAGE_DIGEST" "$SOURCE_SHA" "$RUN_NUMBER" "$ALLOW_ROLLBACK"
 
       - name: Read deployment transaction status
         if: always() && steps.tailscale.outcome == 'success'

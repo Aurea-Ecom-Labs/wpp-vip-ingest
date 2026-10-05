@@ -30,7 +30,7 @@ The worker writes `runtime-status.json` atomically. It contains an instance ID, 
 
 The transport seam uses the Adapter pattern: the live Baileys adapter and the explicit fake adapter supply a session to the same worker lifecycle. This lets tests exercise the real runtime without WhatsApp. Node.js provides function parameters and module imports for this seam; it does not require a dependency-injection container.
 
-The host transaction also uses an Adapter seam: production calls Docker Compose, while tests inject a fake Docker adapter to check ordering and rollback without changing a host. Python's standard library supplies `subprocess` and file locks; it does not include a Docker client framework.
+The host transaction also uses an Adapter seam: production calls Docker Compose, while tests inject a fake Docker adapter to check ordering and rollback without changing a host. Python's standard library supplies `subprocess` and file locks; it does not include a Docker client framework. If no worker is running, the transaction runs `init-data` before it starts the candidate.
 
 ## Session and job outcomes
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Admission } from '../src/admission.mjs';
 import { readHealth, writeStatusSnapshot } from '../src/runtime-state.mjs';
-import { WorkerRuntime } from '../src/runtime.mjs';
+import { attachShutdownSignals, WorkerRuntime } from '../src/runtime.mjs';
 import { main } from '../src/cli.mjs';
 
 function temporaryDirectory(t) {
@@ -139,6 +139,18 @@ test('backup makes a consistent SQLite copy and protects copied credentials', as
   assert.equal(statSync(join(destination, 'auth', 'creds.json')).mode & 0o777, 0o600);
 });
 
+test('backup refuses a destination inside the live data directory', async t => {
+  const directory = temporaryDirectory(t);
+  const dataDir = join(directory, 'data');
+  const destination = join(dataDir, 'nested-backup');
+  await assert.rejects(main(['backup', destination], {
+    WPP_DATA_DIR: dataDir,
+    WPP_RUNTIME_MODE: 'container',
+    WPP_LOCK_HELD: '1',
+  }), /outside the live data directory/);
+  assert.equal(existsSync(destination), false);
+});
+
 test('health rejects stale snapshots and a reused process id', t => {
   const directory = temporaryDirectory(t);
   writeStatusSnapshot(directory, {
@@ -236,6 +248,17 @@ test('native live worker is retired before it opens local data', async t => {
     WPP_GROUPS: '123456789@g.us',
   }), /Live worker runs only through Docker Compose/);
   assert.equal(existsSync(join(directory, 'data')), false);
+});
+
+test('repeated shutdown signals keep the first bounded drain in control', () => {
+  const signals = new EventEmitter();
+  let stopCount = 0, repeatCount = 0;
+  const detach = attachShutdownSignals({ stop: () => { stopCount++; } }, signals, () => { repeatCount++; });
+  signals.emit('SIGTERM');
+  signals.emit('SIGINT');
+  assert.equal(stopCount, 1);
+  assert.equal(repeatCount, 1);
+  detach();
 });
 
 test('logout before ready persists pairing and blocks future connections', async t => {

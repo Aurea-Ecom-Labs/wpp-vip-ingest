@@ -1,4 +1,6 @@
 import fcntl
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +98,9 @@ class FakeDocker:
             self.crash_after_start = False
             raise KeyboardInterrupt('synthetic lost response')
 
+    def initialize_volume(self, image):
+        self.events.append(('initialize_volume', image))
+
     def wait_ready(self):
         self.events.append(('ready', self.running))
         if self.running in self.fail_readiness:
@@ -124,6 +129,7 @@ class DeploymentTests(unittest.TestCase):
             self.deploy('latest; touch /tmp/bad', SOURCE_A, 1)
         self.assertEqual(self.docker.events, [])
 
+
     def test_success_preserves_an_intentional_pause(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.docker.job_counts = {'uncertain': 2, 'in_flight': 0}
@@ -134,6 +140,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn(('resume', f'{IMAGE_PREFIX}@{DIGEST_A}'), self.docker.events)
         self.assertEqual(result['lastSuccessful']['digest'], DIGEST_A)
         self.assertEqual(result['uncertainJobCount'], 2)
+
+    def test_fresh_volume_is_initialized_before_worker_start(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        names = [name for name, _ in self.docker.events]
+        self.assertLess(names.index('initialize_volume'), names.index('start'))
 
     def test_resumed_worker_resumes_only_after_candidate_readiness(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
@@ -245,6 +257,57 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(DeploymentError, 'host lock'):
                 self.deploy(DIGEST_A, SOURCE_A, 1)
         self.assertEqual(self.docker.events, [])
+
+
+class TailscaleCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='wpp-tailscale-test-')
+        self.root = Path(self.temp.name)
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        self.capture = self.root / 'args.txt'
+        fake = self.bin / 'tailscale'
+        fake.write_text(
+            '#!/bin/sh\n'
+            'printf "%s\\n" "$@" > "$TAILSCALE_CAPTURE"\n'
+            'exit "${TAILSCALE_EXIT:-0}"\n',
+            encoding='utf-8',
+        )
+        fake.chmod(0o755)
+        self.script = Path(__file__).resolve().parent.parent / 'deploy' / 'tailscale-deploy.sh'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def invoke(self, target, digest, sha, run_number, rollback, exit_code='0'):
+        environment = os.environ.copy()
+        environment.update({
+            'PATH': f'{self.bin}:{environment["PATH"]}',
+            'TAILSCALE_CAPTURE': str(self.capture),
+            'TAILSCALE_EXIT': exit_code,
+        })
+        return subprocess.run(
+            ['bash', str(self.script), target, digest, sha, run_number, rollback],
+            env=environment, capture_output=True, text=True,
+        )
+
+    def test_runs_only_the_fixed_remote_script_with_validated_arguments(self):
+        result = self.invoke('deploy@worker.tailnet.ts.net', DIGEST_A, SOURCE_A, '7', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.capture.read_text().splitlines(), [
+            'ssh', 'deploy@worker.tailnet.ts.net',
+            '/opt/wpp-vip-ingest/deploy/deploy-container.sh',
+            DIGEST_A, SOURCE_A, '7', '--rollback',
+        ])
+
+    def test_rejects_shell_injection_before_ssh(self):
+        result = self.invoke('deploy@worker;touch /tmp/bad', DIGEST_A, SOURCE_A, '7', 'false')
+        self.assertEqual(result.returncode, 64)
+        self.assertFalse(self.capture.exists())
+
+    def test_propagates_remote_failure(self):
+        result = self.invoke('deploy@worker.tailnet.ts.net', DIGEST_A, SOURCE_A, '7', 'false', '17')
+        self.assertEqual(result.returncode, 17)
 
 
 if __name__ == '__main__':

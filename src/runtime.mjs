@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Admission, normalizeJid } from './admission.mjs';
 import { readSource } from './source.mjs';
 import { connect } from './baileys.mjs';
-import { readHealth, writeStatusSnapshot } from './runtime-state.mjs';
+import { writeStatusSnapshot } from './runtime-state.mjs';
 
 const defaultTimers = {
   setTimeout: (...args) => setTimeout(...args),
@@ -306,6 +306,20 @@ export class WorkerRuntime {
   }
 }
 
-export function getHealth(dataDir, options) {
-  return readHealth(dataDir, options);
+export function attachShutdownSignals(runtime, signalSource = process, onRepeatedSignal = () => {}) {
+  let stopping = false;
+  const handleSignal = () => {
+    if (stopping) {
+      onRepeatedSignal();
+      return;
+    }
+    stopping = true;
+    runtime.stop();
+  };
+  signalSource.on('SIGINT', handleSignal);
+  signalSource.on('SIGTERM', handleSignal);
+  return () => {
+    signalSource.off('SIGINT', handleSignal);
+    signalSource.off('SIGTERM', handleSignal);
+  };
 }
