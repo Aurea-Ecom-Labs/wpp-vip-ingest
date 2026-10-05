@@ -146,3 +146,7 @@ Use manual pairing to restore the session. No automatic credential deletion is i
 The prototype covers standalone groups first. Community propagation is not implemented or assumed.
 The official API number's linked-device compatibility must be checked in a live trial.
 See [Baileys response evidence](docs/baileys-responses.md) and [architecture](docs/architecture.md).
+
+## Learn the deployment design
+
+Read the [current and proposed design](docs/learning/design-guide.md), [identity and private deployment](docs/learning/identity-and-deployment.md), and [detailed implementation handoff](docs/learning/implementation-plan.md). These explain the planned Docker, GHCR, CI, and Tailscale changes. They do not claim that those changes are implemented.
