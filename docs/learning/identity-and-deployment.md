@@ -1,6 +1,6 @@
 # Understand identity and private deployment
 
-Status: proposed configuration. No tailnet, server, registry, or GitHub environment was changed by this documentation.
+Status: workflow code is present in this branch. No tailnet, server, registry visibility, or GitHub environment was changed or verified.
 
 ## 1. Four separate permissions
 
@@ -112,11 +112,13 @@ The publish job authenticates to `ghcr.io` using its GitHub job token and `packa
 
 A code repository and its image package have separate visibility. The proposed first package is public. A public pull needs no registry credential on the Mac. If the owner chooses a private package, design server-side read-only registry authentication separately. Do not copy the publishing token onto the server. Never use image build arguments for WhatsApp credentials.
 
+The selected first-release path is a public GHCR package. The owner must still link the package to this repository, set its visibility to public, and test an anonymous pull. The repository being public does not prove the package is public.
+
 ## 6. Remote replacement example
 
-A deployment job receives a tested digest from the publish result. It connects to one configured MagicDNS host as the configured deployment account. It requests a fixed server-side deployment script, passing a validated digest for the approved image only.
+A deployment job receives a tested manifest digest and platform digests from the successful publish artifact. It connects to one configured MagicDNS host as the configured deployment account. It requests a fixed server-side deployment script, passing the validated digest, source SHA, and publish run number. The workflow does not accept an arbitrary image name or digest.
 
-The script must own deployment serialization and record phases on the host. GitHub concurrency is useful but cannot block a local operator or another workflow. The script validates the image prefix and `sha256` digest, pulls the candidate, persists pause, drains and stops the old owner, starts the candidate paused, verifies bounded readiness, and records success before resuming. It must never evaluate caller-supplied shell text.
+A deployment transaction is one serialized image replacement with durable phase records. The fixed host script owns this transaction and uses an OS lock to block a second deploy. GitHub concurrency is useful but cannot block a local operator or another workflow. The script validates the image prefix and `sha256` digest, verifies source and run labels, checks schema compatibility and disk space, pulls the candidate, persists pause, drains and stops the old owner, starts the candidate paused, verifies bounded readiness, and records success before resuming. It must never evaluate caller-supplied shell text.
 
 A read-only local health command can run through `docker exec`. Live `check` and `retry` commands require the worker stopped because they open a session. Do not run a second live session inside an already running worker container.
 
@@ -127,3 +129,12 @@ If verification fails, keep admission paused. Restore the previous compatible im
 Before a live rollout, use an isolated test service and synthetic state. Confirm that a valid production job joins, an unauthorized branch cannot join, the runner reaches only the target, the permitted account works, other accounts fail, and cleanup removes the ephemeral device. Then prove that the deployment account can reach the correct Docker runtime. These are different checks; one successful SSH command does not prove all of them.
 
 Read the [design guide sources](design-guide.md#sources) and the [implementation plan](implementation-plan.md) for the exact work boundaries.
+
+The workflow and scripts are not proof of authorization. Owner setup must create the production environment and restrict its branches, create the exact federated identity, review effective tailnet rules, confirm the Tailscale SSH server and account, and confirm the account's Docker access. The configured production target and package visibility remain unknown here.
+
+## Expected behavior
+
+- Given an untrusted pull request, when its checks run, then they receive no package-write permission, OIDC token permission, or tailnet access.
+- Given a manual deploy request, when its commit has no successful trusted publish record, then digest resolution fails before joining the tailnet.
+- Given a request selects an older successful publish, when rollback is false, then both the workflow and host reject it.
+- Given the Tailscale trust or target configuration is absent, when deployment starts, then the job fails without changing the worker.
