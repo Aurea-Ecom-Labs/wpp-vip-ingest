@@ -140,6 +140,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         control: service.runtimeState.readControl(),
         status: readStatusSnapshot(config.dataDir),
         health: readHealth(config.dataDir),
+        processCurrent: runtimeProcessIsAlive(config.dataDir),
         jobCounts: service.countStates(),
       });
       return;
@@ -207,7 +208,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         requireSource: true,
       });
       const health = readHealth(config.dataDir);
-      if (!health.healthy || health.lifecycle !== 'ready' || health.session !== 'active') {
+      if (!health.healthy || !runtimeProcessIsAlive(config.dataDir) ||
+          health.lifecycle !== 'ready' || health.session !== 'active') {
         throw new Error('Worker readiness is missing or stale; keep admission paused');
       }
       const next = service.runtimeState.updateControl({ admission: 'resumed' });

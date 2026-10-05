@@ -275,6 +275,7 @@ class DockerCompose:
                 if snapshot.get('lifecycle') == 'failed':
                     return last_status
                 if (last_status.get('health', {}).get('healthy') and
+                        last_status.get('processCurrent') is True and
                         snapshot.get('lifecycle') == 'ready' and
                         last_status.get('control', {}).get('session') == 'active'):
                     return last_status

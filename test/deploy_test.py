@@ -77,6 +77,7 @@ class FakeDocker:
             'control': {'admission': self.admission, 'session': 'active'},
             'status': {'lifecycle': 'ready', 'session': 'active'},
             'health': {'healthy': True},
+            'processCurrent': True,
             'jobCounts': dict(self.job_counts),
         }
 

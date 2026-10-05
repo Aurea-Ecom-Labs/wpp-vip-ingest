@@ -82,8 +82,6 @@ test('health accepts a fresh needs-pairing process without exposing credentials'
 
   const health = readHealth(directory, {
     now: 105_000,
-    isProcessAlive: pid => pid === 123,
-    getProcessStartToken: () => 'start-a',
   });
   assert.deepEqual(health, {
     healthy: true,
@@ -151,7 +149,7 @@ test('backup refuses a destination inside the live data directory', async t => {
   assert.equal(existsSync(destination), false);
 });
 
-test('health rejects stale snapshots and a reused process id', t => {
+test('health rejects stale snapshots after a process restart', t => {
   const directory = temporaryDirectory(t);
   writeStatusSnapshot(directory, {
     instanceId: 'instance-old', lifecycle: 'ready',
@@ -160,16 +158,8 @@ test('health rejects stale snapshots and a reused process id', t => {
 
   assert.equal(readHealth(directory, {
     now: 120_001,
-    isProcessAlive: () => true,
-    getProcessStartToken: () => 'start-a',
   }).healthy, false);
-  const restarted = readHealth(directory, {
-    now: 105_000,
-    isProcessAlive: () => true,
-    getProcessStartToken: () => 'start-b',
-  });
-  assert.equal(restarted.healthy, false);
-  assert.equal(restarted.reason, 'process_restarted');
+  assert.equal(readHealth(directory, { now: 105_000 }).healthy, true);
 });
 
 test('worker starts paused and processes one source job after resume', async t => {
@@ -237,6 +227,26 @@ test('resume refuses invalid configuration and leaves control paused', async t =
   };
   await assert.rejects(main(['resume'], env), /Set WPP_GROUPS/);
   const service = new Admission({ dbPath: join(env.WPP_DATA_DIR, 'jobs.db'), allowedGroups: [] });
+  t.after(() => service.close());
+  assert.equal(service.runtimeState.readControl().admission, 'paused');
+});
+
+test('resume rejects a fresh snapshot from a process that is no longer alive', async t => {
+  const directory = temporaryDirectory(t);
+  const dataDir = join(directory, 'data');
+  const sourcePath = join(directory, 'source.json');
+  const group = '123456789@g.us';
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(sourcePath, '[]');
+  writeStatusSnapshot(dataDir, {
+    instanceId: 'dead-worker', lifecycle: 'ready',
+    admission: 'paused', session: 'active', activeClaims: 0,
+  }, { pid: 99999999 });
+  const env = { WPP_DATA_DIR: dataDir, WPP_SOURCE: sourcePath, WPP_GROUPS: group };
+
+  assert.equal(readHealth(dataDir).healthy, true);
+  await assert.rejects(main(['resume'], env), /readiness is missing or stale/);
+  const service = new Admission({ dbPath: join(dataDir, 'jobs.db'), dataDir, allowedGroups: [group] });
   t.after(() => service.close());
   assert.equal(service.runtimeState.readControl().admission, 'paused');
 });
