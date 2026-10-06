@@ -73,7 +73,7 @@ test('paused source import does not create jobs', async t => {
   assert.equal(service.list().length, 0);
 });
 
-test('health accepts a fresh needs-pairing process without exposing credentials', t => {
+test('health accepts a fresh needs-pairing snapshot without exposing credentials', t => {
   const directory = temporaryDirectory(t);
   writeStatusSnapshot(directory, {
     instanceId: 'instance-test', lifecycle: 'needs_pairing',
@@ -149,7 +149,7 @@ test('backup refuses a destination inside the live data directory', async t => {
   assert.equal(existsSync(destination), false);
 });
 
-test('health rejects stale snapshots after a process restart', t => {
+test('health rejects snapshots with a stale heartbeat', t => {
   const directory = temporaryDirectory(t);
   writeStatusSnapshot(directory, {
     instanceId: 'instance-old', lifecycle: 'ready',

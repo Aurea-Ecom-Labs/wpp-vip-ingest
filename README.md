@@ -41,7 +41,7 @@ Container tests use the built image, SQLite, and an explicit fake transport. The
 WPP_TEST_IMAGE=wpp-vip-ingest:test WPP_REQUIRE_DOCKER_TESTS=1 node --test test/container.test.mjs
 ```
 
-PR run `37404969806` passed native amd64 and arm64 container tests. Simulated checks do not prove live WhatsApp behavior, Docker Desktop behavior, Tailscale policy, or server deployment.
+PR run `37405763481` passed native amd64 and arm64 container tests. Simulated checks do not prove live WhatsApp behavior, Docker Desktop behavior, Tailscale policy, or server deployment.
 
 ## Compose setup and live trial
 
