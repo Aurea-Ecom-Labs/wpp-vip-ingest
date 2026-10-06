@@ -26,7 +26,7 @@ The source parser validates the complete JSON snapshot before import. `Admission
 
 `RuntimeStateStore` stores versioned admission and session control in a separate `runtime-state.sqlite` file. This keeps the existing `jobs.db` schema unchanged. A new control database starts paused. A short `BEGIN IMMEDIATE` transaction on the control database serializes pause/resume with each source insert, message receipt, and job claim. A pause also waits for active work to drain before it reports success. Paused `/add` commands do not consume receipts. Paused source imports do not enqueue jobs.
 
-The worker writes `runtime-status.json` atomically. It contains an instance ID, process identity, lifecycle state, control state, and heartbeat. `health` reads this snapshot only; it does not read SQLite or credentials. `resume` and deployment readiness also check the recorded process identity with the operating system. Linux process start time makes a reused PID different from the process that wrote an old snapshot. Health reports snapshot freshness; `runtime-status` reports session readiness and admission mode.
+The worker writes `runtime-status.json` atomically. It contains an instance ID, process identity, lifecycle state, control state, and heartbeat. `health` reads this snapshot and verifies the recorded process identity with the operating system; it does not read SQLite or credentials. Linux process start time makes a reused PID different from the process that wrote an old snapshot. Health reports process liveness; `runtime-status` reports session readiness and admission mode.
 
 The transport seam uses the Adapter pattern: the live Baileys adapter and the explicit fake adapter supply a session to the same worker lifecycle. This lets tests exercise the real runtime without WhatsApp. Node.js provides function parameters and module imports for this seam; it does not require a dependency-injection container.
 
@@ -74,5 +74,6 @@ Container CI uses only the explicit fake transport and synthetic numbers. It doe
 
 - Given a new database, when the worker starts, then it is paused and does not claim a queued job.
 - Given a status snapshot with a stale heartbeat, when `health` reads it, then it reports unhealthy.
+- Given a fresh snapshot from a different process start, when `health` reads it, then it reports unhealthy.
 - Given the session is `needs_pairing`, when the worker restarts, then it stays visible and does not connect.
 - Given an addition is uncertain, when the worker restarts, then the record stays uncertain and no external write repeats.

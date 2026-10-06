@@ -225,6 +225,8 @@ export function readStatusSnapshot(dataDir) {
 export function readHealth(dataDir, {
   now = Date.now(),
   staleAfterMs = 15_000,
+  isProcessAlive = processIsAlive,
+  getProcessStartToken = processStartToken,
 } = {}) {
   const path = join(dataDir, 'runtime-status.json');
   if (!existsSync(path)) return { healthy: false, lifecycle: 'unknown', reason: 'missing_status' };
@@ -234,11 +236,15 @@ export function readHealth(dataDir, {
 
   const heartbeat = Date.parse(status.heartbeatAt);
   const fresh = Number.isFinite(heartbeat) && now >= heartbeat && now - heartbeat <= staleAfterMs;
+  const alive = Number.isSafeInteger(status.pid) && isProcessAlive(status.pid);
+  const token = status.processStartToken === null ? null : getProcessStartToken(status.pid);
+  const identityMatches = status.processStartToken === null || token === status.processStartToken;
   const valid = status.version === 1 && typeof status.instanceId === 'string' &&
     LIFECYCLE_STATES.includes(status.lifecycle) && ['paused', 'resumed'].includes(status.admission) &&
     ['active', 'needs_pairing'].includes(status.session);
-  const healthy = valid && fresh && status.lifecycle !== 'failed';
+  const healthy = valid && fresh && alive && identityMatches && status.lifecycle !== 'failed';
   const reason = !valid ? 'invalid_status' : !fresh ? 'stale_heartbeat' :
+    !alive ? 'process_stopped' : !identityMatches ? 'process_restarted' :
     status.lifecycle === 'failed' ? 'worker_failed' : undefined;
   return {
     healthy,

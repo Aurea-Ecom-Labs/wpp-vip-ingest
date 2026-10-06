@@ -4,9 +4,9 @@ Status: CODE AND NATIVE CONTAINER CI COMPLETE; OWNER/LIVE ACCEPTANCE INCOMPLETE.
 
 The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
 
-This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37405763481` passed the native amd64 and arm64 container jobs for commit `8f8e642`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37407432992` passed the native amd64 and arm64 container jobs for commit `bc5f00c`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37405763481`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
+Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37407432992`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -42,13 +42,13 @@ Acceptance: baseline reproduced; external unknowns listed; no production operati
 
 ## Phase 1: extract a testable worker lifecycle
 
-**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, repeated signals, and bounded shutdown. Native container CI passed in PR run `37405763481`.
+**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, repeated signals, and bounded shutdown. Native container CI passed in PR run `37407432992`.
 
 Expected files: new `src/runtime.mjs` and `src/runtime-state.mjs`; refactor `src/cli.mjs`; update `src/baileys.mjs` and tests. Final names may differ if documented.
 
 Separate CLI parsing from the worker lifecycle. Inject transport, clock, timers, and local data paths for tests. Keep `Admission` responsible for admission rules. Add persistent control state with an explicit version and atomic writes: admission paused/resumed and session active/needs_pairing. Default the first Docker deployment to paused. Existing native behavior must have an explicit migration decision, documented and tested.
 
-Define lifecycle states: starting, connecting, ready, draining, needs_pairing, failed. Write a local status snapshot with instance identity and a heartbeat. Health reads this snapshot only. Report no phone numbers or raw credentials in health output. A stale snapshot must not look healthy after a restart.
+Define lifecycle states: starting, connecting, ready, draining, needs_pairing, failed. Write a local status snapshot with instance identity and a heartbeat. Health reads this snapshot and checks its recorded process identity, without opening SQLite or a Baileys connection. Report no phone numbers or raw credentials in health output. A stale snapshot must not look healthy after a restart.
 
 Add commands `health`, `pause`, `resume`, and `runtime-status`. Pause persists even when the process exits. Resume refuses if session-stop is set, configuration is invalid, or readiness is stale. Paused commands must not consume a message receipt and silently lose an operator request; report a local paused result and do not enqueue it. Do not send a group response.
 
@@ -70,7 +70,7 @@ Acceptance: two live owners cannot start against one volume; forced kill release
 
 ## Phase 3: container package and Compose
 
-**Code status:** Dockerfile, Compose configuration, entry wrapper, `.env.example`, ignore rules, and `docs/docker.md` are present. Node 24 Debian base digest is pinned. Run `37405763481` passed native amd64/arm64 builds, Baileys imports, Compose validation, non-root writes, and source mount checks. macOS Docker Desktop remains an owner trial.
+**Code status:** Dockerfile, Compose configuration, entry wrapper, `.env.example`, ignore rules, and `docs/docker.md` are present. Node 24 Debian base digest is pinned. Run `37407432992` passed native amd64/arm64 builds, Baileys imports, Compose validation, non-root writes, and source mount checks. macOS Docker Desktop remains an owner trial.
 
 Add `Dockerfile`, `.dockerignore`, `compose.yaml`, a container entry wrapper, `.env.example`, and `docs/docker.md`.
 
@@ -86,7 +86,7 @@ Acceptance: clean build on both architectures; non-root write access; Baileys im
 
 ## Phase 4: container behavior tests
 
-**Code status:** explicit fake transport and container lifecycle tests are present. Run `37405763481` passed the synthetic lifecycle cases inside native amd64 and arm64 containers and uploaded test records/logs. The local host still cannot run Docker containers.
+**Code status:** explicit fake transport and container lifecycle tests are present. Run `37407432992` passed the synthetic lifecycle cases inside native amd64 and arm64 containers and uploaded test records/logs. The local host still cannot run Docker containers.
 
 Add a fake transport entry point that exercises the real worker lifecycle and SQLite without contacting WhatsApp. The live transport remains the default; tests select the fake explicitly. CI must never silently fall back from a failed live transport to simulation.
 
@@ -98,7 +98,7 @@ Acceptance: results test behavior and observable records, not only file syntax. 
 
 ## Phase 5: CI and image publication
 
-**Code status:** the read-only PR workflow passed in run `37405763481`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
+**Code status:** the read-only PR workflow passed in run `37407432992`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
 
 Extend or replace `.github/workflows/test.yml`. Add a publish workflow. Pin external actions to reviewed commit SHAs. Use minimum job permissions.
 
