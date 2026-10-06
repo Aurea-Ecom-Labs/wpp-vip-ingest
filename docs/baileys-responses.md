@@ -50,3 +50,9 @@ The prototype uses these rules:
 Tests include the reported `403` shape and a synthetic `200` plus `add_request` case.
 The synthetic case tests defensive behavior. It is not a claim that this exact shape was observed live.
 No live account response was collected during these tests.
+
+## Logout before the first open connection
+
+The installed `@whiskeysockets/baileys@7.0.0-rc13` package defines `DisconnectReason.loggedOut` as status `401` in `node_modules/@whiskeysockets/baileys/lib/Types/index.js`. Its socket emits `connection.update` with `connection: 'close'` and `lastDisconnect.error` from `node_modules/@whiskeysockets/baileys/lib/Socket/socket.js`.
+
+`src/baileys.mjs` checks this status even if no `open` event occurred. It calls the runtime handler before rejecting the initial connection. The handler persists `needs_pairing` and pauses admission. The worker then stays visible without opening another session. This behavior is covered through the injected fake transport. It does not prove a live logout response from WhatsApp.

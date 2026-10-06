@@ -1,0 +1,163 @@
+name: Deploy tested image
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA from a successful trusted main publish
+        required: true
+        type: string
+      rollback:
+        description: Allow a publish older than the current main release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve tested main digest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      digest: ${{ steps.record.outputs.digest }}
+      source_sha: ${{ steps.record.outputs.source_sha }}
+      run_number: ${{ steps.record.outputs.run_number }}
+      rollback: ${{ steps.record.outputs.rollback }}
+    steps:
+      - name: Find successful publish record
+        id: record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          ALLOW_ROLLBACK: ${{ inputs.rollback }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo 'Deployment workflow must run from main.' >&2; exit 1; }
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'commit_sha must be a full lowercase Git SHA' >&2; exit 1; }
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          if [[ "$ALLOW_ROLLBACK" != "true" && "$REQUESTED_SHA" != "$main_sha" ]]; then
+            echo 'The selected commit is not the current main commit. Set rollback only for an approved rollback.' >&2
+            exit 1
+          fi
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/runs?branch=main&head_sha=$REQUESTED_SHA&per_page=100")
+          run=$(jq -c --arg sha "$REQUESTED_SHA" '
+            [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push" and .status == "completed" and .conclusion == "success")]
+            | sort_by(.run_number) | last // empty' <<< "$runs")
+          [[ -n "$run" ]] || { echo 'No successful trusted publish exists for this commit.' >&2; exit 1; }
+          run_id=$(jq -r .id <<< "$run")
+          run_number=$(jq -r .run_number <<< "$run")
+          if [[ "$ALLOW_ROLLBACK" != "true" ]]; then
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/runs?branch=main&per_page=100" --jq '
+              [.workflow_runs[] | select(.head_branch == "main" and .event == "push" and .status == "completed" and .conclusion == "success")]
+              | sort_by(.run_number) | last | .run_number')
+            [[ "$run_number" == "$latest" ]] || { echo 'A newer trusted publish exists. Select it or request an approved rollback.' >&2; exit 1; }
+          fi
+          mkdir -p "$RUNNER_TEMP/publish-record"
+          gh run download "$run_id" --name "publish-record-$REQUESTED_SHA" --dir "$RUNNER_TEMP/publish-record"
+          record="$RUNNER_TEMP/publish-record/record.json"
+          jq -e --arg sha "$REQUESTED_SHA" --argjson run "$run_number" '
+            .source_sha == $sha and .run_number == $run and
+            .platforms.amd64.container_tests == "passed" and
+            .platforms.arm64.container_tests == "passed" and
+            (.manifest_digest | test("^sha256:[0-9a-f]{64}$")) and
+            (.platforms.amd64.digest | test("^sha256:[0-9a-f]{64}$")) and
+            (.platforms.arm64.digest | test("^sha256:[0-9a-f]{64}$"))' "$record" >/dev/null
+          echo "digest=$(jq -r .manifest_digest "$record")" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_number=$run_number" >> "$GITHUB_OUTPUT"
+          echo "rollback=$ALLOW_ROLLBACK" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Replace the production worker
+    needs: resolve
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: wpp-vip-ingest-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out the trusted workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate configured target
+        id: target
+        env:
+          TARGET_HOST: ${{ vars.WPP_DEPLOY_HOST }}
+          TARGET_USER: ${{ vars.WPP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo 'Set a valid WPP_DEPLOY_HOST in the production environment.' >&2; exit 1; }
+          [[ "$TARGET_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo 'Set a valid WPP_DEPLOY_USER in the production environment.' >&2; exit 1; }
+          [[ "$TARGET_USER" != "root" ]] || { echo 'Do not deploy through the root account.' >&2; exit 1; }
+          echo "host=$TARGET_HOST" >> "$GITHUB_OUTPUT"
+          echo "user=$TARGET_USER" >> "$GITHUB_OUTPUT"
+
+      - name: Join the tailnet with workload identity
+        id: tailscale
+        # This pinned action has a post step that logs out when the job ends.
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_FEDERATED_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:wpp-deploy-ci
+          use-cache: false
+
+      - name: Run the fixed server deployment script
+        id: remote-deploy
+        continue-on-error: true
+        env:
+          TARGET: ${{ steps.target.outputs.user }}@${{ steps.target.outputs.host }}
+          IMAGE_DIGEST: ${{ needs.resolve.outputs.digest }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RUN_NUMBER: ${{ needs.resolve.outputs.run_number }}
+          ALLOW_ROLLBACK: ${{ needs.resolve.outputs.rollback }}
+        run: |
+          set -euo pipefail
+          bash deploy/tailscale-deploy.sh "$TARGET" "$IMAGE_DIGEST" "$SOURCE_SHA" "$RUN_NUMBER" "$ALLOW_ROLLBACK"
+
+      - name: Read deployment transaction status
+        if: always() && steps.tailscale.outcome == 'success'
+        id: remote-status
+        continue-on-error: true
+        env:
+          TARGET: ${{ steps.target.outputs.user }}@${{ steps.target.outputs.host }}
+        run: |
+          set -euo pipefail
+          tailscale ssh "$TARGET" /opt/wpp-vip-ingest/deploy/deployment-status.sh > "$RUNNER_TEMP/deployment-status.json"
+          jq -e . "$RUNNER_TEMP/deployment-status.json" >/dev/null
+
+      - name: Write sanitized job summary
+        if: always()
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          IMAGE_DIGEST: ${{ needs.resolve.outputs.digest }}
+          RUN_NUMBER: ${{ needs.resolve.outputs.run_number }}
+        run: |
+          {
+            echo "## Worker deployment"
+            echo "- Source commit: $SOURCE_SHA"
+            echo "- Tested image digest: $IMAGE_DIGEST"
+            echo "- Trusted publish run: $RUN_NUMBER"
+            echo "- Deployment command: ${{ steps.remote-deploy.outcome }}"
+            if [[ -f "$RUNNER_TEMP/deployment-status.json" ]]; then
+              echo '- Server transaction status:'
+              echo '```json'
+              jq '{transactionId,outcome,phase,candidateDigest,sourceSha,previousDigest,readiness,updatedAt}' "$RUNNER_TEMP/deployment-status.json"
+              echo '```'
+            else
+              echo '- Server transaction status: unavailable; check the host locally before retry.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if deployment did not complete
+        if: always()
+        run: test "${{ steps.remote-deploy.outcome }}" = success

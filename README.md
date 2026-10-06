@@ -1,6 +1,6 @@
 # wpp-vip-ingest
 
-Small WhatsApp group-addition prototype for macOS. It uses Baileys and local SQLite records.
+Small WhatsApp group-addition prototype for macOS and Linux. Docker Compose runs the Baileys worker and its local SQLite records.
 It has a JSON source, an `/add` command adapter, and one long-running worker.
 It has no event export, message archive, customer reply, offer sender, or invitation sender.
 
@@ -29,37 +29,44 @@ Install Node.js 24 or later. Then run:
 
 ```sh
 npm test
+npm run test:deploy
 npm run demo
 ```
 
-These commands do not need dependencies installed. They do not connect to WhatsApp.
-The demo uses a simulated socket. Thirty-one tests passed on Linux with Node.js v24.19.0.
-The test suite includes application flows, SQLite persistence, and a CLI smoke run.
-The pinned live dependencies were installed and passed an import smoke check without opening a WhatsApp connection.
-It does not prove live WhatsApp behavior or macOS execution.
+Unit tests and the demo do not connect to WhatsApp. `npm test` skips container tests when a Docker daemon is not available. The demo uses a simulated socket. `npm run test:deploy` tests the host transaction logic with a fake Docker adapter and needs Python 3.
 
-## Live trial
+Container tests use the built image, SQLite, and an explicit fake transport. They need a running Docker Compose v2 daemon:
 
 ```sh
-npm ci
-export WPP_DATA_DIR="$HOME/Library/Application Support/wpp-vip-ingest"
-npm run pair
-node src/cli.mjs groups
+WPP_TEST_IMAGE=wpp-vip-ingest:test WPP_REQUIRE_DOCKER_TESTS=1 node --test test/container.test.mjs
 ```
 
-Scan the QR with the Business app's linked-device function. No official Business API token is used.
-If WhatsApp closes the first pairing connection with a restart-required result, run `npm run pair` again.
+PR run `37416858418` passed native amd64 and arm64 container tests. Simulated checks do not prove live WhatsApp behavior, Docker Desktop behavior, Tailscale policy, or server deployment.
+
+## Compose setup and live trial
+
+```sh
+cp .env.example .env
+chmod 600 .env
+export WPP_UID="$(id -u)" WPP_GID="$(id -g)"
+mkdir -p source
+printf '[]\n' > source/source.json
+docker compose build
+docker compose run --rm worker pair
+docker compose up -d worker
+docker compose exec worker node src/cli.mjs runtime-status
+```
+
+Replace the sample group and operator identifiers in `.env`. Add only business-approved `phone` and `group` rows to `source/source.json`. Scan the QR with the Business app's linked-device function. No official Business API token is used.
+If WhatsApp logs out, the worker stays in `needs_pairing`. Stop the worker before running `docker compose run --rm worker pair` again. The command uses the same data volume and lock.
 Do not change the production number's official API registration to test this prototype.
 Verify that the app session and official API messaging still work after pairing.
 
-Then configure one private test group and an operator identity:
+The first data volume starts paused. After the worker status is `ready`, resume explicitly:
 
 ```sh
-export WPP_GROUPS="123456789@g.us"
-export WPP_OPERATORS="5511777777777@s.whatsapp.net"
-export WPP_SOURCE="$WPP_DATA_DIR/source.json"
-# Create source.json with numbers approved by the business.
-npm start
+docker compose exec worker node src/cli.mjs health
+docker compose exec worker node src/cli.mjs resume
 ```
 
 The connected account must be an admin of the target group.
@@ -71,7 +78,7 @@ It does not send a group acknowledgement or private message. Read results with `
 The worker imports the source every ten seconds and processes at most ten queued entries per cycle.
 It uses one connection and performs additions sequentially. Repeated source entries do not create another job.
 The timer interval and cycle limit are prototype values, not a guarantee of WhatsApp acceptance.
-Keep all live numbers, source files, credentials, databases, and logs outside Git.
+Keep all live numbers, source files, credentials, databases, and logs outside Git. Compose mounts the source directory read-only and stores credentials, runtime state, and SQLite in the named `wpp-data` volume.
 
 ## Results
 
@@ -99,13 +106,15 @@ There is no automatic retry, reconciliation loop, or automatic re-addition.
 
 ## Human review
 
-Stop the worker before using the live review commands. They need exclusive session ownership.
+Pause and stop the worker before using the live review commands. They need exclusive session ownership.
 Inspect the group in the WhatsApp UI. Wait for any previous operation to settle.
 Then run a read-only membership check:
 
 ```sh
-node src/cli.mjs status
-node src/cli.mjs check JOB_ID
+docker compose exec worker node src/cli.mjs pause
+docker compose stop -t 60 worker
+docker compose run --rm --no-deps worker status
+docker compose run --rm --no-deps worker check JOB_ID
 ```
 
 The `check` command reports `present`, `absent`, or `uncertain`. It sends no addition request.
@@ -113,20 +122,21 @@ If the result remains uncertain, stop. If the member is present, do not try anot
 For an uncertain job with confirmed absent membership, record a human review note:
 
 ```sh
-node src/cli.mjs retry JOB_ID "Checked in WhatsApp; prior operation settled; member absent"
+docker compose run --rm --no-deps worker retry JOB_ID "Checked in WhatsApp; prior operation settled; member absent"
 ```
 
 This command rechecks membership and returns the job to `queued` only when membership is absent.
-It does not send the addition itself. Restart the worker to perform the explicitly requested attempt.
+It does not send the addition itself. Start the worker, inspect readiness, then explicitly resume admission to perform the requested attempt.
 An `invite_required` job cannot be returned to the queue by this command.
 
-## macOS deployment
+## Host operation
 
-Use launchd, not systemd. See [macOS instructions](docs/macos.md).
-The installation script creates a user LaunchAgent with absolute Node and project paths.
-It preserves credentials and job records in Application Support.
-A LaunchAgent runs while its user session is available. It is not a system service before login.
-An asleep or powered-off Mac cannot process jobs. Treat availability as a deployment requirement.
+Use Docker Compose on macOS and Linux. See [Docker Compose operations](docs/docker.md) and [macOS host notes](docs/macos.md).
+Native LaunchAgent operation is retired. The legacy installer now exits with a deprecation message. Stop any installed LaunchAgent before pairing or starting the container.
+
+**Before / after:** Before this change, LaunchAgent ran the live Node process on macOS. Now Docker Compose owns the live process on macOS and Linux. Local simulated tests still run directly under Node.
+
+The CLI also has a manual `backup DIRECTORY` command for the stopped worker. The owner runs it when needed; it copies authentication files and job records. Read the [backup warning and procedure](docs/docker.md#backup-and-restore) before use. This sensitive-data warning does not block normal worker operation.
 
 ## Scope and limits
 
@@ -135,13 +145,8 @@ It uses the command and headless-runtime approach studied in `he4rt/wpp-tui`.
 The implementation is new code. It deliberately omits the collector and export components.
 Baileys is pinned to `7.0.0-rc13`, the version inspected in the upstream project.
 
-The live adapter uses file-based authentication for the trial. Baileys does not recommend that helper for production.
-Replace it with a durable credential and Signal-key store before production use.
-Only one local process may own the account session. A lock prevents a second live command or worker from starting.
-After a crash, inspect the process state before removing a stale lock. Do not bypass this check.
-Connection loss stops the worker. launchd can restart it after a nonzero exit, but stopped admission jobs remain stopped.
-Logout leaves credentials in place and exits successfully so launchd does not repeatedly try to pair.
-Use manual pairing to restore the session. No automatic credential deletion is implemented.
+The live adapter uses Baileys file-based authentication for this trial. The data volume is private and the entry wrapper uses `flock` on a stable lock file. The operating system releases the lock when the process exits. Do not remove the lock file.
+A non-logout transport failure drains and exits nonzero; Compose may restart the process. An interrupted `in_flight` job becomes `uncertain` and is not retried. Logout or missing pairing credentials persists `needs_pairing`, keeps credentials, and blocks reconnects until explicit pairing. No automatic credential deletion or uncertain-job retry is implemented.
 
 The prototype covers standalone groups first. Community propagation is not implemented or assumed.
 The official API number's linked-device compatibility must be checked in a live trial.
@@ -149,4 +154,12 @@ See [Baileys response evidence](docs/baileys-responses.md) and [architecture](do
 
 ## Learn the deployment design
 
-Read the [current and proposed design](docs/learning/design-guide.md), [identity and private deployment](docs/learning/identity-and-deployment.md), and [detailed implementation handoff](docs/learning/implementation-plan.md). These explain the planned Docker, GHCR, CI, and Tailscale changes. They do not claim that those changes are implemented.
+Read the [current and proposed design](docs/learning/design-guide.md), [identity and private deployment](docs/learning/identity-and-deployment.md), and [implementation handoff](docs/learning/implementation-plan.md). They distinguish code in this repository from owner configuration that is not verified here.
+
+## Expected behavior
+
+- Given a new Docker data volume, when the worker starts, then it is paused until an operator resumes it.
+- Given a paused worker receives `/add`, when it handles the command, then it reports a local paused result and creates no receipt or job.
+- Given an uncertain addition, when the worker restarts, then it does not send the addition again.
+- Given the session logs out, when the container restarts, then the worker stays visible in `needs_pairing` until an operator pairs it.
+- Given the worker is stopped, when the owner runs `backup DIRECTORY`, then SQLite and auth data are copied with restrictive permissions.

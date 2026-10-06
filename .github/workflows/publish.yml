@@ -1,0 +1,184 @@
+name: Publish trusted image
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/aurea-ecom-labs/wpp-vip-ingest
+
+jobs:
+  platform-image:
+    name: Build, test, and publish ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and publish one platform image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            PUBLISH_RUN_NUMBER=${{ github.run_number }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Pull the exact platform digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker pull "$IMAGE@$DIGEST"
+
+      - name: Test the published digest in containers
+        id: container-tests
+        env:
+          WPP_TEST_IMAGE: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          WPP_REQUIRE_DOCKER_TESTS: '1'
+          WPP_CONTAINER_LOG_DIR: ${{ runner.temp }}/wpp-container-logs
+        run: node --test test/container.test.mjs
+
+      - name: Record tested platform digest
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/platform-result"
+          jq -n \
+            --arg platform "$ARCH" \
+            --arg digest "$DIGEST" \
+            --arg source_sha "$GITHUB_SHA" \
+            --argjson run_number "$GITHUB_RUN_NUMBER" \
+            '{platform:$platform,digest:$digest,source_sha:$source_sha,run_number:$run_number,container_tests:"passed"}' \
+            > "$RUNNER_TEMP/platform-result/record.json"
+
+      - name: Upload platform test record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-result-${{ matrix.arch }}
+          path: ${{ runner.temp }}/platform-result/record.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+      - name: Upload synthetic container logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-logs-${{ matrix.arch }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/wpp-container-logs/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
+
+  manifest:
+    name: Assemble tested multi-platform image
+    needs: platform-image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download tested platform records
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: platform-result-*
+          path: ${{ runner.temp }}/platform-results
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Verify records and assemble manifest
+        id: manifest
+        run: |
+          amd="$RUNNER_TEMP/platform-results/platform-result-amd64/record.json"
+          arm="$RUNNER_TEMP/platform-results/platform-result-arm64/record.json"
+          jq -e --arg sha "$GITHUB_SHA" --argjson run "$GITHUB_RUN_NUMBER" \
+            '.source_sha == $sha and .run_number == $run and .platform == "amd64" and .container_tests == "passed"' "$amd" >/dev/null
+          jq -e --arg sha "$GITHUB_SHA" --argjson run "$GITHUB_RUN_NUMBER" \
+            '.source_sha == $sha and .run_number == $run and .platform == "arm64" and .container_tests == "passed"' "$arm" >/dev/null
+          amd_digest=$(jq -r .digest "$amd")
+          arm_digest=$(jq -r .digest "$arm")
+          [[ "$amd_digest" =~ ^sha256:[0-9a-f]{64}$ && "$arm_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools create \
+            --tag "$IMAGE:sha-$GITHUB_SHA" \
+            "$IMAGE@$amd_digest" "$IMAGE@$arm_digest"
+          inspect=$(docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA")
+          manifest_digest=$(awk '$1 == "Digest:" { print $2; exit }' <<< "$inspect")
+          [[ "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/publish-record"
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg manifest_digest "$manifest_digest" \
+            --arg source_sha "$GITHUB_SHA" \
+            --argjson run_number "$GITHUB_RUN_NUMBER" \
+            --arg amd_digest "$amd_digest" \
+            --arg arm_digest "$arm_digest" \
+            --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{image:$image,manifest_digest:$manifest_digest,source_sha:$source_sha,run_number:$run_number,created_at:$created_at,platforms:{amd64:{digest:$amd_digest,container_tests:"passed"},arm64:{digest:$arm_digest,container_tests:"passed"}}}' \
+            > "$RUNNER_TEMP/publish-record/record.json"
+          {
+            echo "Manifest: $IMAGE@$manifest_digest"
+            echo "Source: $GITHUB_SHA (publish run $GITHUB_RUN_NUMBER)"
+            echo "amd64 tested digest: $amd_digest"
+            echo "arm64 tested digest: $arm_digest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "manifest_digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload trusted publish record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: publish-record-${{ github.sha }}
+          path: ${{ runner.temp }}/publish-record/record.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90

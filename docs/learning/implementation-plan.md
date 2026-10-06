@@ -1,6 +1,12 @@
 # Implementation handoff: Docker, CI, and private deployment
 
-Status: NOT IMPLEMENTED. Baseline: `c9fd452`. Date: 2026-10-05.
+Status: CODE AND NATIVE CONTAINER CI COMPLETE; OWNER/LIVE ACCEPTANCE INCOMPLETE. Date: 2026-10-06.
+
+The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
+
+This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37416858418` passed the native amd64 and arm64 container jobs for commit `99ba78b`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+
+Local `npm test` passes 49 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37416858418`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -26,17 +32,23 @@ Owner: supply the following facts through configuration, not hardcoded code:
 | Public or private GHCR package decision | Determine pull authentication |
 | Persistent data/source locations and current pairing state | Plan safe cutover |
 
+Public GHCR was selected for the first release. The following owner facts remain unknown: target host and CPU, Tailscale installation/version, Docker startup model and context, deployment account access, effective tailnet policy and Tailnet Lock, package linkage/visibility, persistent source/data locations, current pairing state, and current LaunchAgent state.
+
 Stop only the dependent live deployment work if these facts are missing. Continue code, tests, and explanatory docs. Do not guess a host or weaken SSH policy.
 
 Acceptance: baseline reproduced; external unknowns listed; no production operation performed.
 
+**Code status:** baseline tests were reproduced. The installed Baileys package was inspected for `DisconnectReason.loggedOut` and `connection.update` behavior. Owner facts above remain unresolved. The branch has not performed production operations.
+
 ## Phase 1: extract a testable worker lifecycle
+
+**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, invalid-configuration shutdown, repeated signals, and bounded shutdown. Native container CI passed in PR run `37416858418`.
 
 Expected files: new `src/runtime.mjs` and `src/runtime-state.mjs`; refactor `src/cli.mjs`; update `src/baileys.mjs` and tests. Final names may differ if documented.
 
 Separate CLI parsing from the worker lifecycle. Inject transport, clock, timers, and local data paths for tests. Keep `Admission` responsible for admission rules. Add persistent control state with an explicit version and atomic writes: admission paused/resumed and session active/needs_pairing. Default the first Docker deployment to paused. Existing native behavior must have an explicit migration decision, documented and tested.
 
-Define lifecycle states: starting, connecting, ready, draining, needs_pairing, failed. Write a local status snapshot with instance identity and a heartbeat. Health reads this snapshot only. Report no phone numbers or raw credentials in health output. A stale snapshot must not look healthy after a restart.
+Define lifecycle states: starting, connecting, ready, draining, needs_pairing, failed. Write a local status snapshot with instance identity and a heartbeat. Health reads this snapshot and checks its recorded process identity, without opening SQLite or a Baileys connection. Report no phone numbers or raw credentials in health output. A stale snapshot must not look healthy after a restart.
 
 Add commands `health`, `pause`, `resume`, and `runtime-status`. Pause persists even when the process exits. Resume refuses if session-stop is set, configuration is invalid, or readiness is stale. Paused commands must not consume a message receipt and silently lose an operator request; report a local paused result and do not enqueue it. Do not send a group response.
 
@@ -45,6 +57,8 @@ Shutdown: stop new claims and command work, drain the active attempt and credent
 Acceptance: tests cover pause during a running operation, no new claim after pause, restart retains pause, invalid resume fails, stale health fails, and bounded shutdown does not resend.
 
 ## Phase 2: session ownership and logout
+
+**Code status:** Linux Compose commands use one stable `flock` file. Native live operation is retired; launchd instructions and installer are marked deprecated. Native container CI passed logout persistence, forced-kill recovery, and competing-owner tests. No live logout or pairing was run.
 
 Replace the directory-only lock with an OS-managed exclusive advisory lock on a stable file in the shared local data volume. On Linux containers, an entry wrapper can use `flock` for the full live process lifetime. Every command that opens Baileys must use the same lock. Do not unlink the locked file. OS release on process death removes the stale-directory problem. Do not use PID existence alone: container PID namespaces and PID reuse make that unsafe.
 
@@ -55,6 +69,8 @@ Classify logout even before the first successful connection. Persist needs_pairi
 Acceptance: two live owners cannot start against one volume; forced kill releases ownership; replacement recovers interrupted jobs as uncertain; logout survives a container/runtime restart; explicit pairing and resume work in a fake transport test. No automatic credential deletion.
 
 ## Phase 3: container package and Compose
+
+**Code status:** Dockerfile, Compose configuration, entry wrapper, `.env.example`, ignore rules, and `docs/docker.md` are present. Node 24 Debian base digest is pinned. Run `37416858418` passed native amd64/arm64 builds, Baileys imports, Compose validation, non-root writes, and source mount checks. macOS Docker Desktop remains an owner trial.
 
 Add `Dockerfile`, `.dockerignore`, `compose.yaml`, a container entry wrapper, `.env.example`, and `docs/docker.md`.
 
@@ -70,6 +86,8 @@ Acceptance: clean build on both architectures; non-root write access; Baileys im
 
 ## Phase 4: container behavior tests
 
+**Code status:** explicit fake transport and container lifecycle tests are present. Run `37416858418` passed the synthetic lifecycle cases inside native amd64 and arm64 containers and uploaded test records/logs. The local host still cannot run Docker containers.
+
 Add a fake transport entry point that exercises the real worker lifecycle and SQLite without contacting WhatsApp. The live transport remains the default; tests select the fake explicitly. CI must never silently fall back from a failed live transport to simulation.
 
 Test in actual containers: first startup paused, resume, successful simulated addition, repeated source entry, privacy add_request with status403 and status200, error/timeout, healthy needs_pairing, forced-kill in_flight, replacement with same volume, exclusive ownership, source mount permissions, graceful SIGTERM, and stale health. Check persistent records after each relevant replacement. Assert one simulated external write where required.
@@ -79,6 +97,8 @@ Use deterministic fault hooks/barriers rather than arbitrary long sleeps. A fail
 Acceptance: results test behavior and observable records, not only file syntax. Architecture variants both run, preferably on native amd64/arm64 runners. If emulation is used, label that limitation. macOS Docker Desktop smoke is a separate owner trial; macOS-hosted Node tests are not a Docker Desktop test.
 
 ## Phase 5: CI and image publication
+
+**Code status:** the read-only PR workflow passed in run `37416858418`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
 
 Extend or replace `.github/workflows/test.yml`. Add a publish workflow. Pin external actions to reviewed commit SHAs. Use minimum job permissions.
 
@@ -91,6 +111,8 @@ Owner: permit GHCR publishing in the organization, link package to repository, a
 Acceptance: untrusted PR cannot publish or join tailnet; both platform images tested; published digest and commit traceable; clean anonymous pull works if public.
 
 ## Phase 6: server deployment transaction
+
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. Twenty-one local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, container identity/source access, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
@@ -111,6 +133,8 @@ Acceptance: fake Docker/SSH command tests cover failures at each phase, lost res
 
 ## Phase 7: owner identity and tailnet setup
 
+**Code status:** deployment workflow inputs match this design. The production environment, OIDC trust, tailnet policy, Tailnet Lock, server account, SSH, and Docker access are not configured or tested.
+
 The owner creates the production GitHub environment, restricts deployment branches, creates tags, and creates the federated identity. Use the exact issuer, environment subject, audience, and claim restrictions described in `identity-and-deployment.md`. Use auth_keys scope and only the runner tag. Do not create broad wildcard trust.
 
 Merge narrow network and SSH rules into the existing tailnet policy. Remove or adjust broader rules that would accidentally grant CI unrelated access. Validate policy tests. Confirm macOS CLI Tailscale SSH capability, local account existence, target tag uniqueness, host SSH exposure, and Docker access. Preserve existing human access and a local recovery path. Do not switch Tailscale variants or edit the live policy without owner authorization.
@@ -119,6 +143,8 @@ Acceptance: authorized workflow joins; unauthorized branch/repository fails; tar
 
 ## Phase 8: deployment workflow
 
+**Code status:** manual workflow code is present. It resolves only a successful main publish record, checks release order, uses the production environment, and joins through Tailscale SSH. It has not run because owner secrets, environment rules, federation, and target details are not configured.
+
 Add `.github/workflows/deploy.yml` with workflow_dispatch initially. Resolve the requested digest from a successful trusted publish record for main; do not accept an arbitrary untested image. Re-check candidate age/order so a delayed job cannot replace a newer release without an explicit rollback request.
 
 Use the production environment, contents read and id-token write for this job, and the federated identity inputs. Join with the deployment tag. Connect through Tailscale SSH to the configured host/account. Invoke the fixed deployment script and query transaction status. Serialize by target; do not cancel a deployment already replacing a worker. Use job timeouts and bounded server operations. Cleanup must run after failure where possible.
@@ -126,6 +152,8 @@ Use the production environment, contents read and id-token write for this job, a
 Acceptance: manual deployment of a tested digest succeeds on a non-production trial target; failed readiness keeps admission paused; cleanup occurs; job summary includes commit, digest, transaction result, and sanitized readiness. Only then perform the owner-approved real account trial.
 
 ## Phase 9: cutover, docs, and later automation
+
+**Code status:** README, architecture, macOS, Docker, identity, and implementation documents are updated. The CLI has a manual `backup DIRECTORY` command to support the owner backup task; it does not run automatically. The separate HTML snapshot is not in this repository. LaunchAgent shutdown, backup/restore execution, volume migration, Business app/API checks, reboot, logout, rollback, and production cutover remain owner work. Automatic deployment is not enabled.
 
 Owner: stop/disable the original LaunchAgent before pairing or running the container. Back up stopped state using a consistent SQLite backup, including credentials with restrictive permissions. Migrate the data into the container volume and validate file ownership. Run first replacement paused. Verify official Business API and app behavior manually. Use a private test group and approved test numbers. Do not infer compatibility from simulated CI.
 

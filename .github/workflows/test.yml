@@ -1,13 +1,107 @@
 name: Tests
-on: [push, pull_request]
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: macos-latest
+  platform-tests:
+    name: Test ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - run: npm test
-      - run: npm run demo
-      - run: bash -n deploy/install-launchagent.sh
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run application and CLI tests
+        run: npm test
+
+      - name: Test deployment transaction logic
+        run: npm run test:deploy
+
+      - name: Check locked package advisories
+        run: npm audit --omit=dev
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build this CPU image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          docker buildx build --load --platform "$PLATFORM"
+          --tag wpp-vip-ingest:test
+          --build-arg VCS_REF="$GITHUB_SHA"
+          --build-arg PUBLISH_RUN_NUMBER=0 .
+
+      - name: Check image source and revision labels
+        run: |
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' wpp-vip-ingest:test)" = "https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' wpp-vip-ingest:test)" = "$GITHUB_SHA"
+
+      - name: Import pinned Baileys in the image
+        run: docker run --rm --entrypoint node wpp-vip-ingest:test --input-type=module -e "await import('@whiskeysockets/baileys')"
+
+      - name: Validate Compose configuration
+        env:
+          WPP_IMAGE: wpp-vip-ingest:test
+          WPP_GROUPS: 123456789@g.us
+          WPP_SOURCE_DIR: ${{ runner.temp }}/source
+        run: |
+          mkdir -p "$WPP_SOURCE_DIR"
+          printf '[]\n' > "$WPP_SOURCE_DIR/source.json"
+          docker compose -f compose.yaml config --quiet
+
+      - name: Run container lifecycle tests
+        id: container-tests
+        env:
+          WPP_TEST_IMAGE: wpp-vip-ingest:test
+          WPP_REQUIRE_DOCKER_TESTS: '1'
+          WPP_CONTAINER_LOG_DIR: ${{ runner.temp }}/wpp-container-logs
+        run: node --test test/container.test.mjs
+
+      - name: Record container test result
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.container-tests.outcome }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/wpp-container-artifact"
+          jq -n --arg platform "$PLATFORM" --arg sha "$GITHUB_SHA" --arg outcome "$TEST_OUTCOME" \
+            '{platform:$platform,source_sha:$sha,container_tests:$outcome,transport:"explicit-fake"}' \
+            > "$RUNNER_TEMP/wpp-container-artifact/record.json"
+
+      - name: Upload synthetic container logs and test record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-test-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/wpp-container-artifact/record.json
+            ${{ runner.temp }}/wpp-container-logs/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14

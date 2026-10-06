@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
+import { MemoryRuntimeStateStore, RuntimeStateStore } from './runtime-state.mjs';
 
 export function phoneJid(phone) {
   if (!/^\+[1-9]\d{7,14}$/.test(phone ?? '')) throw new Error('Use a full international number');
@@ -18,11 +19,12 @@ export function jobId(group, phone) {
 // Consent belongs to the business. Every source entry is accepted as authorized.
 // No consent database, callback, reference, or version exists in this service.
 export class Admission {
-  constructor({ dbPath = ':memory:', socket, allowedGroups, botIds = [], operators = [], timeoutMs = 30_000 }) {
+  constructor({ dbPath = ':memory:', dataDir, runtimeState, socket, allowedGroups, botIds = [], operators = [], timeoutMs = 30_000,
+    clock = () => Date.now(), timers = globalThis }) {
     this.db = new DatabaseSync(dbPath);
     this.socket = socket; this.allowedGroups = new Set(allowedGroups);
     this.botIds = new Set(botIds.map(normalizeJid)); this.operators = new Set(operators.map(normalizeJid));
-    this.timeoutMs = timeoutMs;
+    this.timeoutMs = timeoutMs; this.clock = clock; this.timers = timers;
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY, group_id TEXT NOT NULL, phone TEXT NOT NULL,
@@ -33,6 +35,7 @@ export class Admission {
         job_id TEXT, attempt INTEGER, state TEXT, detail TEXT, recorded_at TEXT);
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, job_id TEXT);
       CREATE TABLE IF NOT EXISTS mappings (phone_jid TEXT PRIMARY KEY, lid TEXT UNIQUE);`);
+    this.runtimeState = runtimeState ?? (dataDir ? new RuntimeStateStore(dataDir) : new MemoryRuntimeStateStore());
   }
   recoverInterrupted() {
     // Call only after acquiring exclusive worker ownership.
@@ -45,12 +48,30 @@ export class Admission {
     this.db.prepare("INSERT OR IGNORE INTO jobs(id,group_id,phone,state) VALUES(?,?,?,'queued')").run(id, group, phone);
     return id;
   }
+  enqueueIfAccepting(row) {
+    return this.runtimeState.withControlLock(control => {
+      if (control.admission !== 'resumed' || control.session !== 'active') return null;
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const id = this.enqueue(row);
+        this.db.exec('COMMIT');
+        return id;
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    });
+  }
   state(id) { return this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id); }
   list() { return this.db.prepare('SELECT * FROM jobs ORDER BY rowid').all(); }
+  countStates() {
+    return Object.fromEntries(this.db.prepare('SELECT state, COUNT(*) AS count FROM jobs GROUP BY state')
+      .all().map(row => [row.state, row.count]));
+  }
   finish(id, state, detail = '') {
     this.db.prepare('UPDATE jobs SET state=?, detail=? WHERE id=?').run(state, detail, id);
     const job = this.state(id);
-    this.db.prepare('INSERT INTO attempts VALUES(?,?,?,?,?)').run(id, job.attempt_count, state, detail, new Date().toISOString());
+    this.db.prepare('INSERT INTO attempts VALUES(?,?,?,?,?)').run(id, job.attempt_count, state, detail, new Date(this.clock()).toISOString());
     return state;
   }
   remember(p) {
@@ -72,8 +93,8 @@ export class Admission {
   async call(fn) {
     let timer;
     try { return await Promise.race([Promise.resolve().then(fn), new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Operation timed out')), this.timeoutMs);
-    })]); } finally { clearTimeout(timer); }
+      timer = this.timers.setTimeout(() => reject(new Error('Operation timed out')), this.timeoutMs);
+    })]); } finally { this.timers.clearTimeout(timer); }
   }
   async metadata(group) {
     const meta = await this.call(() => this.socket.groupMetadata(group));
@@ -83,6 +104,7 @@ export class Admission {
   }
   async command({ group, actor, messageId, text, type = 'notify' }) {
     if (type !== 'notify') return 'ignored';
+    if (!this.runtimeState.accepting()) return 'paused';
     const match = /^\/add (\+[1-9]\d{7,14})$/.exec(text ?? '');
     if (!match || !messageId) return 'invalid_command';
     if (!this.allowedGroups.has(group)) return 'not_authorized';
@@ -90,19 +112,39 @@ export class Admission {
     try { meta = await this.metadata(group); } catch { return 'uncertain'; }
     if (![...this.operators].some(op => this.aliases(op).has(normalizeJid(actor))) ||
       !meta.participants.some(p => this.matches(p, actor) && ['admin','superadmin'].includes(p.admin))) return 'not_authorized';
-    const receipt = `${group}:${messageId}`, seen = this.db.prepare('SELECT job_id FROM receipts WHERE id=?').get(receipt);
-    if (seen) return this.state(seen.job_id).state;
-    const id = this.enqueue({ group, phone: match[1] });
-    this.db.prepare('INSERT OR IGNORE INTO receipts VALUES(?,?)').run(receipt, id);
-    return id; // Worker performs the write. No customer-group acknowledgement or DM.
+    return this.runtimeState.withControlLock(control => {
+      if (control.admission !== 'resumed' || control.session !== 'active') return 'paused';
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const receipt = `${group}:${messageId}`, seen = this.db.prepare('SELECT job_id FROM receipts WHERE id=?').get(receipt);
+        if (seen) {
+          const result = this.state(seen.job_id).state;
+          this.db.exec('COMMIT');
+          return result;
+        }
+        const id = this.enqueue({ group, phone: match[1] });
+        this.db.prepare('INSERT OR IGNORE INTO receipts VALUES(?,?)').run(receipt, id);
+        this.db.exec('COMMIT');
+        return id; // Worker performs the write. No customer-group acknowledgement or DM.
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    });
   }
   async run(id, { dryRun = false } = {}) {
     const job = this.state(id);
     if (!job) throw new Error('Unknown job');
     if (job.state !== 'queued') return job.state;
+    if (!dryRun && !this.runtimeState.accepting()) return 'paused';
     if (!dryRun) {
-      const claim = this.db.prepare("UPDATE jobs SET state='in_flight', attempt_count=attempt_count+1 WHERE id=? AND state='queued'").run(id);
-      if (!claim.changes) return this.state(id).state;
+      const claim = this.runtimeState.withControlLock(control => {
+        if (control.admission !== 'resumed' || control.session !== 'active') return 'paused';
+        return this.db.prepare(`UPDATE jobs SET state='in_flight', attempt_count=attempt_count+1
+          WHERE id=? AND state='queued'`).run(id).changes;
+      });
+      if (claim === 'paused') return 'paused';
+      if (!claim) return this.state(id).state;
     }
     const done = (state, detail = '') => dryRun ? state : this.finish(id, state, detail);
     try {
@@ -153,5 +195,5 @@ export class Admission {
     this.db.prepare("UPDATE jobs SET state='queued', review_note=? WHERE id=? AND state='uncertain'").run(reviewNote.trim(), id);
     return 'queued';
   }
-  close() { this.db.close(); }
+  close() { this.db.close(); this.runtimeState.close(); }
 }
