@@ -214,6 +214,9 @@ class DockerCompose:
     def pull(self, image):
         self.compose('pull', 'worker', image=image, timeout=600)
 
+    def pull_image(self, image):
+        self.run(['docker', 'pull', image], timeout=600)
+
     def schema(self, image):
         jobs = self.label(image, SCHEMA_LABEL)
         runtime = self.label(image, RUNTIME_SCHEMA_LABEL)
@@ -251,6 +254,16 @@ class DockerCompose:
             raise DeploymentError('Worker runtime status is incomplete')
         return value
 
+    def stopped_status(self, image):
+        raw = self.compose('run', '--rm', 'worker', 'runtime-status', image=image, timeout=60)
+        try:
+            value = json.loads(raw.splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as error:
+            raise DeploymentError('Stopped worker control status is invalid') from error
+        if not isinstance(value, dict) or not isinstance(value.get('control'), dict):
+            raise DeploymentError('Stopped worker control status is incomplete')
+        return value
+
     def pause(self):
         result = self.compose('exec', '-T', 'worker', 'node', 'src/cli.mjs', 'pause', timeout=75)
         try:
@@ -261,7 +274,7 @@ class DockerCompose:
             raise DeploymentError('Worker did not confirm a paused, drained state')
 
     def persist_pause_stopped(self):
-        result = self.compose('run', '--rm', 'worker', 'pause', timeout=90)
+        result = self.compose('run', '--rm', '--no-deps', 'worker', 'pause', timeout=90)
         try:
             value = json.loads(result.splitlines()[-1])
         except (IndexError, json.JSONDecodeError) as error:
@@ -276,9 +289,6 @@ class DockerCompose:
 
     def start(self, image):
         self.compose('up', '-d', '--no-deps', '--force-recreate', 'worker', image=image, timeout=300)
-
-    def initialize_volume(self, image):
-        self.compose('run', '--rm', '--no-deps', 'init-data', image=image, timeout=300)
 
     def wait_ready(self, timeout=180):
         deadline = self.clock() + timeout
@@ -326,7 +336,7 @@ class Deployment:
             raise DeploymentError('A publish run cannot replace its recorded image digest')
         status = self.docker.status()
         control = status.get('control', {}) if status else {}
-        previous_mode = control.get('admission', 'paused')
+        previous_mode = control.get('admission') if status else None
         if control.get('session') == 'needs_pairing':
             previous_mode = 'paused'
         current_image = self.docker.running_image()
@@ -343,7 +353,7 @@ class Deployment:
             'rollbackRequested': rollback,
             'previousDigest': previous_digest,
             'previousMode': previous_mode,
-            'previousSchema': self.docker.schema(f'{IMAGE_PREFIX}@{previous_digest}') if previous_digest else None,
+            'previousSchema': None,
             'candidateSchema': None,
             'lastSuccessful': last,
             'createdAt': timestamp(),
@@ -429,6 +439,17 @@ class Deployment:
                     raise DeploymentError('Candidate image has no trusted publish run number') from error
                 if image_run_number != run_number:
                     raise DeploymentError('Candidate image run number does not match the trusted publish record')
+                previous = transaction.get('previousDigest')
+                if previous and DIGEST_RE.fullmatch(previous):
+                    previous_image = f'{IMAGE_PREFIX}@{previous}'
+                    try:
+                        transaction['previousSchema'] = self.docker.schema(previous_image)
+                    except DeploymentError:
+                        try:
+                            self.docker.pull_image(previous_image)
+                            transaction['previousSchema'] = self.docker.schema(previous_image)
+                        except DeploymentError:
+                            transaction['previousSchema'] = None
                 if (transaction.get('previousDigest') and transaction.get('previousSchema') and
                         transaction['previousSchema'] != transaction['candidateSchema']):
                     raise DeploymentError('Candidate database schema is not compatible with the previous image')
@@ -457,6 +478,10 @@ class Deployment:
                     self._save(transaction)
                     self.docker.stop()
                     disrupted = True
+                else:
+                    status = self.docker.stopped_status(image)
+                    control = status.get('control', {})
+                    transaction['previousMode'] = 'paused' if control.get('session') == 'needs_pairing' else control.get('admission', 'paused')
                 transaction['phase'] = 'old_worker_stopped'
                 self._save(transaction)
 
@@ -464,10 +489,9 @@ class Deployment:
                 self._save(transaction)
                 disrupted = True
                 self.docker.set_configured_image(image)
-                if not current:
-                    transaction['phase'] = 'initializing_data_volume'
-                    self._save(transaction)
-                    self.docker.initialize_volume(image)
+                transaction['phase'] = 'persisting_candidate_pause'
+                self._save(transaction)
+                self.docker.persist_pause_stopped()
                 self.docker.start(image)
                 transaction['phase'] = 'candidate_started'
                 self._save(transaction)

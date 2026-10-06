@@ -24,7 +24,8 @@ class FakeDocker:
         self.fail_readiness = set()
         self.fail_pause_number = None
         self.pause_count = 0
-        self.fail_persist_pause = False
+        self.fail_persist_pause_number = None
+        self.persist_pause_count = 0
         self.fail_pull = False
         self.fail_start = set()
         self.crash_after_start = False
@@ -84,6 +85,10 @@ class FakeDocker:
             'jobCounts': dict(self.job_counts),
         }
 
+    def stopped_status(self, image):
+        self.events.append(('stopped_status', image))
+        return {'control': {'admission': self.admission, 'session': 'active'}}
+
     def pause(self):
         self.pause_count += 1
         self.events.append(('pause', self.running))
@@ -92,8 +97,9 @@ class FakeDocker:
         self.admission = 'paused'
 
     def persist_pause_stopped(self):
+        self.persist_pause_count += 1
         self.events.append(('persist_pause_stopped', self.running))
-        if self.fail_persist_pause:
+        if self.persist_pause_count == self.fail_persist_pause_number:
             raise DeploymentError('Stopped pause command failed')
         self.admission = 'paused'
 
@@ -110,9 +116,6 @@ class FakeDocker:
         if self.crash_after_start:
             self.crash_after_start = False
             raise KeyboardInterrupt('synthetic lost response')
-
-    def initialize_volume(self, image):
-        self.events.append(('initialize_volume', image))
 
     def wait_ready(self):
         self.events.append(('ready', self.running))
@@ -176,7 +179,8 @@ class DeploymentTests(unittest.TestCase):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.deploy(DIGEST_A, SOURCE_A, 1)
         names = [name for name, _ in self.docker.events]
-        self.assertLess(names.index('initialize_volume'), names.index('start'))
+        self.assertLess(names.index('stopped_status'), names.index('persist_pause_stopped'))
+        self.assertLess(names.index('persist_pause_stopped'), names.index('start'))
 
     def test_resumed_worker_resumes_only_after_candidate_readiness(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
@@ -226,7 +230,7 @@ class DeploymentTests(unittest.TestCase):
         self.docker.add_image(DIGEST_B, SOURCE_B, 2)
         self.docker.fail_readiness.add(f'{IMAGE_PREFIX}@{DIGEST_B}')
         self.docker.fail_pause_number = 2
-        self.docker.fail_persist_pause = True
+        self.docker.fail_persist_pause_number = 3
         with self.assertRaisesRegex(DeploymentError, 'Candidate readiness'):
             self.deploy(DIGEST_B, SOURCE_B, 2)
         self.assertIsNone(self.docker.running)
