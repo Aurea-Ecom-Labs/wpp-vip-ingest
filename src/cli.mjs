@@ -27,7 +27,7 @@ function parseArguments(argv, env) {
   return { action: args[0] ?? 'help', args: args.slice(1), transport };
 }
 
-function paths(env) {
+function configFromEnv(env) {
   const dataDir = resolve(env.WPP_DATA_DIR ?? 'data');
   return {
     dataDir,
@@ -80,7 +80,7 @@ async function waitForDrain(config, timeoutMs = 60_000) {
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const { action, args, transport } = parseArguments(argv, env);
-  const config = paths(env);
+  const config = configFromEnv(env);
 
   if (action === 'help') {
     console.log('Commands: demo | pair | worker | ingest [source.json] | status | groups | check JOB | retry JOB "human review note" | health | pause | resume | runtime-status | backup DIRECTORY');

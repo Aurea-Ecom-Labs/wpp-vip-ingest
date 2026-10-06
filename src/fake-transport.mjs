@@ -78,5 +78,5 @@ export async function connectFake({ authDir, pair = false, onDisconnect = () => 
     },
   };
   if (mode === 'logout' && !pair) onDisconnect({ reason: 'Synthetic logout', loggedOut: true });
-  return { socket, async close() { socket.ev.removeAllListeners(); }, paired: pair };
+  return { socket, async close() { socket.ev.removeAllListeners(); } };
 }

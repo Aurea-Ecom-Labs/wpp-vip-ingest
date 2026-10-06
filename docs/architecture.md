@@ -73,6 +73,6 @@ Container CI uses only the explicit fake transport and synthetic numbers. It doe
 ## Expected behavior
 
 - Given a new database, when the worker starts, then it is paused and does not claim a queued job.
-- Given a fresh status snapshot from a different process start, when `health` reads it, then it reports unhealthy.
+- Given a status snapshot with a stale heartbeat, when `health` reads it, then it reports unhealthy.
 - Given the session is `needs_pairing`, when the worker restarts, then it stays visible and does not connect.
 - Given an addition is uncertain, when the worker restarts, then the record stays uncertain and no external write repeats.
