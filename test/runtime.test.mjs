@@ -272,6 +272,27 @@ test('native live worker is retired before it opens local data', async t => {
   assert.equal(existsSync(join(directory, 'data')), false);
 });
 
+test('invalid worker configuration does not connect during shutdown', async t => {
+  const directory = temporaryDirectory(t);
+  let failed;
+  let connectionCount = 0;
+  const failedStatus = new Promise(resolveFailed => { failed = resolveFailed; });
+  const runtime = new WorkerRuntime({
+    dataDir: join(directory, 'data'),
+    sourcePath: join(directory, 'missing-source.json'),
+    allowedGroups: [],
+    pollMs: 5,
+    heartbeatMs: 20,
+    onStatus: status => { if (status.lifecycle === 'failed') failed(status); },
+    transport: async () => { connectionCount++; throw new Error('Must not connect'); },
+  });
+  const running = runtime.run();
+  await failedStatus;
+  runtime.stop();
+  await running;
+  assert.equal(connectionCount, 0);
+});
+
 test('repeated shutdown signals keep the first bounded drain in control', () => {
   const signals = new EventEmitter();
   let stopCount = 0, repeatCount = 0;

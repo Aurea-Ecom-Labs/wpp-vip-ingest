@@ -107,16 +107,18 @@ export class WorkerRuntime {
         this.publishStatus();
         await this.waitUntilStopped();
       } else {
+        let configurationValid = true;
         try {
           validateRuntimeConfiguration({ allowedGroups: this.allowedGroups, sourcePath: this.sourcePath });
         } catch {
+          configurationValid = false;
           this.lifecycle = 'failed';
           this.onOutput({ event: 'configuration_invalid' });
           this.publishStatus();
           await this.waitUntilStopped();
         }
 
-        if (this.lifecycle !== 'failed') {
+        if (configurationValid) {
           this.lifecycle = 'connecting';
           this.publishStatus();
           const connected = await this.connectSession();

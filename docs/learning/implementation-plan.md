@@ -6,7 +6,7 @@ The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d
 
 This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37415014526` passed the native amd64 and arm64 container jobs for commit `35e50a8`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37415014526`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
+Local `npm test` passes 49 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37415014526`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -42,7 +42,7 @@ Acceptance: baseline reproduced; external unknowns listed; no production operati
 
 ## Phase 1: extract a testable worker lifecycle
 
-**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, repeated signals, and bounded shutdown. Native container CI passed in PR run `37415014526`.
+**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, invalid-configuration shutdown, repeated signals, and bounded shutdown. Native container CI passed in PR run `37415014526`.
 
 Expected files: new `src/runtime.mjs` and `src/runtime-state.mjs`; refactor `src/cli.mjs`; update `src/baileys.mjs` and tests. Final names may differ if documented.
 
