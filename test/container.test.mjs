@@ -141,8 +141,14 @@ if (!testsEnabled) {
     const status = await ctx.waitReady('ready');
     assert.equal(status.control.admission, 'paused');
     assert.equal(ctx.counts().externalWrites, 0);
-    assert.equal(ctx.exec('node', '--input-type=module', '-e',
-      "import {writeFileSync} from 'node:fs'; writeFileSync('/source/source.json','[]')").status, 1);
+    const composeConfig = JSON.parse(ctx.composeOk('config', '--format', 'json'));
+    const sourceMount = composeConfig.services.worker.volumes.find(mount => mount.target === '/source');
+    assert.equal(sourceMount.source, ctx.sourceDir);
+    assert.equal(ctx.execOk('node', '--input-type=module', '-e',
+      "import {existsSync} from 'node:fs'; process.stdout.write(String(existsSync('/source/source.json')))").trim(), 'true');
+    const sourceWrite = ctx.exec('node', '--input-type=module', '-e',
+      "import {writeFileSync} from 'node:fs'; try { writeFileSync('/source/source.json','[]'); process.exit(2) } catch (error) { if (error.code === 'EROFS') process.exit(0); process.exit(1) }");
+    assert.equal(sourceWrite.status, 0, sourceWrite.stderr);
     assert.equal(ctx.composeOk('exec', '-T', 'worker', 'node', '-p', 'process.getuid()'), '1000');
     assert.deepEqual(JSON.parse(ctx.composeOk('exec', '-T', 'worker', 'node', '--input-type=module', '-e',
       "import {existsSync} from 'node:fs'; process.stdout.write(JSON.stringify(['/app/.env','/app/data','/app/auth','/app/source'].map(existsSync)))")),
