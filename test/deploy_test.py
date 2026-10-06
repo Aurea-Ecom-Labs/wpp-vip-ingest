@@ -89,6 +89,9 @@ class FakeDocker:
         self.events.append(('stopped_status', image))
         return {'control': {'admission': self.admission, 'session': 'active'}}
 
+    def initialize_volume(self, image):
+        self.events.append(('initialize_volume', image))
+
     def pause(self):
         self.pause_count += 1
         self.events.append(('pause', self.running))
@@ -179,8 +182,19 @@ class DeploymentTests(unittest.TestCase):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.deploy(DIGEST_A, SOURCE_A, 1)
         names = [name for name, _ in self.docker.events]
+        self.assertLess(names.index('initialize_volume'), names.index('stopped_status'))
         self.assertLess(names.index('stopped_status'), names.index('persist_pause_stopped'))
         self.assertLess(names.index('persist_pause_stopped'), names.index('start'))
+
+    def test_stopped_resumed_volume_pauses_before_candidate_and_resumes_after_ready(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.docker.admission = 'resumed'
+        result = self.deploy(DIGEST_A, SOURCE_A, 1)
+        names = [name for name, _ in self.docker.events]
+        self.assertLess(names.index('persist_pause_stopped'), names.index('start'))
+        self.assertLess(names.index('ready', names.index('start')), names.index('resume'))
+        self.assertEqual(result['outcome'], 'completed')
+        self.assertEqual(self.docker.admission, 'resumed')
 
     def test_resumed_worker_resumes_only_after_candidate_readiness(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
@@ -239,6 +253,7 @@ class DeploymentTests(unittest.TestCase):
     def test_schema_mismatch_fails_before_pause_or_stop(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.events.clear()
         self.docker.admission = 'resumed'
         self.docker.add_image(DIGEST_B, SOURCE_B, 2, schema='2')
         with self.assertRaisesRegex(DeploymentError, 'database schema'):
@@ -249,6 +264,7 @@ class DeploymentTests(unittest.TestCase):
     def test_pull_failure_does_not_pause_or_stop_the_current_worker(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.events.clear()
         self.docker.admission = 'resumed'
         self.docker.add_image(DIGEST_B, SOURCE_B, 2)
         self.docker.fail_pull = True

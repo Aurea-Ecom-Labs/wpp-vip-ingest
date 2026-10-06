@@ -255,7 +255,7 @@ class DockerCompose:
         return value
 
     def stopped_status(self, image):
-        raw = self.compose('run', '--rm', 'worker', 'runtime-status', image=image, timeout=60)
+        raw = self.compose('run', '--rm', '--no-deps', 'worker', 'runtime-status', image=image, timeout=60)
         try:
             value = json.loads(raw.splitlines()[-1])
         except (IndexError, json.JSONDecodeError) as error:
@@ -289,6 +289,9 @@ class DockerCompose:
 
     def start(self, image):
         self.compose('up', '-d', '--no-deps', '--force-recreate', 'worker', image=image, timeout=300)
+
+    def initialize_volume(self, image):
+        self.compose('run', '--rm', '--no-deps', 'init-data', image=image, timeout=300)
 
     def wait_ready(self, timeout=180):
         deadline = self.clock() + timeout
@@ -476,19 +479,35 @@ class Deployment:
                         self._save(transaction)
                     transaction['phase'] = 'stopping_old_worker'
                     self._save(transaction)
-                    self.docker.stop()
                     disrupted = True
+                    self.docker.stop()
                 else:
+                    transaction['phase'] = 'stopping_old_worker'
+                    self._save(transaction)
+                    disrupted = True
+                    self.docker.stop()
+                    transaction['phase'] = 'initializing_data_volume'
+                    self._save(transaction)
+                    self.docker.set_configured_image(image)
+                    self.docker.initialize_volume(image)
                     status = self.docker.stopped_status(image)
                     control = status.get('control', {})
-                    transaction['previousMode'] = 'paused' if control.get('session') == 'needs_pairing' else control.get('admission', 'paused')
+                    if transaction.get('previousMode') is None:
+                        transaction['previousMode'] = (
+                            'paused' if control.get('session') == 'needs_pairing'
+                            else control.get('admission', 'paused')
+                        )
+                    transaction['uncertainJobCount'] = status.get('jobCounts', {}).get('uncertain', 0)
+                    transaction['inFlightJobCount'] = status.get('jobCounts', {}).get('in_flight', 0)
+                    self._save(transaction)
                 transaction['phase'] = 'old_worker_stopped'
                 self._save(transaction)
 
                 transaction['phase'] = 'starting_candidate_paused'
                 self._save(transaction)
                 disrupted = True
-                self.docker.set_configured_image(image)
+                if current:
+                    self.docker.set_configured_image(image)
                 transaction['phase'] = 'persisting_candidate_pause'
                 self._save(transaction)
                 self.docker.persist_pause_stopped()
