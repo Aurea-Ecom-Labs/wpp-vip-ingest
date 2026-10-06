@@ -2,7 +2,7 @@
 
 Design date: 2026-10-05. Main baseline before implementation: `d0be25e` (includes the prototype at `c9fd452`).
 
-This is teaching documentation. It explains what each module does and how the modules work together. The worker lifecycle, Docker files, CI workflows, and deployment scripts are implemented in this branch. Native amd64 and arm64 container CI passed in run `37414465522`; local Docker Desktop and all owner infrastructure setup remain unverified. Read [the implementation plan](implementation-plan.md) and [identity and deployment](identity-and-deployment.md) for remaining evidence.
+This is teaching documentation. It explains what each module does and how the modules work together. The worker lifecycle, Docker files, CI workflows, and deployment scripts are implemented in this branch. Native amd64 and arm64 container CI passed in run `37415014526`; local Docker Desktop and all owner infrastructure setup remain unverified. Read [the implementation plan](implementation-plan.md) and [identity and deployment](identity-and-deployment.md) for remaining evidence.
 
 ## 1. Start with the business boundary
 
@@ -50,7 +50,7 @@ The account must be a group admin. An allowed command operator must also be a gr
   invite_required -> no invite, no automatic retry
 ```
 
-The tests cover admission outcomes, SQLite, PN/LID resolution, pause/resume, lifecycle recovery, backup permissions, and deployment transactions. Container tests run the fake transport and SQLite inside the built image. PR run `37414465522` passed these tests on native amd64 and arm64 runners. This development host has no running Docker daemon or Compose plugin. No test proves live WhatsApp behavior.
+The tests cover admission outcomes, SQLite, PN/LID resolution, pause/resume, lifecycle recovery, backup permissions, and deployment transactions. Container tests run the fake transport and SQLite inside the built image. PR run `37415014526` passed these tests on native amd64 and arm64 runners. This development host has no running Docker daemon or Compose plugin. No test proves live WhatsApp behavior.
 
 ### Current gaps that matter for containers
 
