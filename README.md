@@ -135,6 +135,8 @@ Native LaunchAgent operation is retired. The legacy installer now exits with a d
 
 **Before / after:** Before this change, LaunchAgent ran the live Node process on macOS. Now Docker Compose owns the live process on macOS and Linux. Local simulated tests still run directly under Node.
 
+The CLI also has a manual `backup DIRECTORY` command for the stopped worker. The owner runs it when needed; it copies authentication files and job records. Read the [backup warning and procedure](docs/docker.md#backup-and-restore) before use. This sensitive-data warning does not block normal worker operation.
+
 ## Scope and limits
 
 This is a prototype extracted from the earlier admission design, not a GitHub fork that contains the full upstream TUI.
@@ -159,3 +161,4 @@ Read the [current and proposed design](docs/learning/design-guide.md), [identity
 - Given a paused worker receives `/add`, when it handles the command, then it reports a local paused result and creates no receipt or job.
 - Given an uncertain addition, when the worker restarts, then it does not send the addition again.
 - Given the session logs out, when the container restarts, then the worker stays visible in `needs_pairing` until an operator pairs it.
+- Given the worker is stopped, when the owner runs `backup DIRECTORY`, then SQLite and auth data are copied with restrictive permissions.

@@ -4,9 +4,9 @@ Status: CODE IMPLEMENTATION IN FEATURE BRANCH; ACCEPTANCE AND OWNER SETUP INCOMP
 
 The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
 
-This branch is `feat/docker-ci-deployment`. Implementation commits are `f81d25c` (worker, container, and host transaction), `ef0baf8` (CI, publish, and manual deploy workflows), and `0573117` (volume initialization, bounded repeated signals, and fake Tailscale command tests). Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+This branch is `feat/docker-ci-deployment`. The worker/container/transaction implementation is in `f81d25c`; CI/publish/deploy workflows are in `ef0baf8`; follow-up fixes are in `0573117`, `c54ccd7`, and `a5dfca8`. Documentation commits are `b333435` and `c26ee8c`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local `npm test` passes 46 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 16 tests. The pinned Baileys import succeeds. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
+Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 17 tests. The pinned Baileys import succeeds. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -112,7 +112,7 @@ Acceptance: untrusted PR cannot publish or join tailnet; both platform images te
 
 ## Phase 6: server deployment transaction
 
-**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. Sixteen local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, and the fixed remote command. No host Compose or Tailscale integration trial has run.
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. Seventeen local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, safe remote arguments, and the fixed remote command. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
@@ -153,7 +153,7 @@ Acceptance: manual deployment of a tested digest succeeds on a non-production tr
 
 ## Phase 9: cutover, docs, and later automation
 
-**Code status:** README, architecture, macOS, Docker, identity, and implementation documents are updated. The separate HTML snapshot is not in this repository. LaunchAgent shutdown, backup/restore trial, volume migration, Business app/API checks, reboot, logout, rollback, and production cutover remain owner work. Automatic deployment is not enabled.
+**Code status:** README, architecture, macOS, Docker, identity, and implementation documents are updated. The CLI has a manual `backup DIRECTORY` command to support the owner backup task; it does not run automatically. The separate HTML snapshot is not in this repository. LaunchAgent shutdown, backup/restore execution, volume migration, Business app/API checks, reboot, logout, rollback, and production cutover remain owner work. Automatic deployment is not enabled.
 
 Owner: stop/disable the original LaunchAgent before pairing or running the container. Back up stopped state using a consistent SQLite backup, including credentials with restrictive permissions. Migrate the data into the container volume and validate file ownership. Run first replacement paused. Verify official Business API and app behavior manually. Use a private test group and approved test numbers. Do not infer compatibility from simulated CI.
 

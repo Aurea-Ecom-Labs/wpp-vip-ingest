@@ -128,6 +128,8 @@ Successful credential writes clear `needs_pairing`. Admission stays paused. Resu
 
 Stop the worker before backup. The `backup` command takes a consistent SQLite copy with `VACUUM INTO` and copies authentication files with restrictive permissions. It requires the same advisory lock as the worker.
 
+**Attention — sensitive data:** this public CLI command copies Baileys authentication files and job records. The owner chooses when to run it and must protect, encrypt, and store the destination securely. This is a warning about the data in the backup, not a blocker for normal worker use. The command does not run automatically.
+
 Example for the default named volume:
 
 ```sh
