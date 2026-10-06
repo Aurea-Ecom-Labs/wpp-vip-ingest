@@ -4,7 +4,7 @@ Status: CODE IMPLEMENTATION IN FEATURE BRANCH; ACCEPTANCE AND OWNER SETUP INCOMP
 
 The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
 
-This branch is `feat/docker-ci-deployment`. The worker/container/transaction implementation is in `f81d25c`; CI/publish/deploy workflows are in `ef0baf8`; follow-up fixes are in `0573117`, `c54ccd7`, `a5dfca8`, and `1c48deb`. Documentation commits are `b333435`, `c26ee8c`, and `94d40d2`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+This branch is `feat/docker-ci-deployment`. The worker/container/transaction implementation is in `f81d25c`; CI/publish/deploy workflows are in `ef0baf8`; follow-up fixes are in `0573117`, `c54ccd7`, `a5dfca8`, `1c48deb`, and `3623a55`. Documentation commits are `b333435`, `c26ee8c`, `94d40d2`, and `489d317`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
 Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 19 tests. The pinned Baileys import succeeds. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
 
@@ -112,7 +112,7 @@ Acceptance: untrusted PR cannot publish or join tailnet; both platform images te
 
 ## Phase 6: server deployment transaction
 
-**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. Nineteen local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. Nineteen local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
