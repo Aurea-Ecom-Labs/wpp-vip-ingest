@@ -32,6 +32,7 @@ COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node src ./src
 COPY --chown=node:node docker/entrypoint.sh ./docker/entrypoint.sh
+COPY --chown=node:node docker/init-data.sh ./docker/init-data.sh
 USER 1000:1000
 ENTRYPOINT ["/bin/sh", "/app/docker/entrypoint.sh"]
 CMD ["worker"]

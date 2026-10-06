@@ -85,7 +85,7 @@ The code now has local health/readiness snapshots, pause/resume commands, Docker
 
 An image is the packaged program. A container is one running instance of that image. A registry stores images. Compose describes the container's settings and mounts. A volume stores data outside the container's replaceable filesystem.
 
-The Dockerfile pins a Node.js 24 Debian base digest and installs locked dependencies with `npm ci --omit=dev`. It runs as UID 1000. No inbound application port is needed for the worker. The worker has no Docker socket mount.
+The Dockerfile pins a Node.js 24 Debian base digest and installs locked dependencies with `npm ci --omit=dev`. The image defaults to UID 1000; Compose runs as the configured non-root `WPP_UID`/`WPP_GID`. No inbound application port is needed for the worker. The worker has no Docker socket mount.
 
 Use one persistent local volume for `jobs.db`, `runtime-state.sqlite`, credentials, and identity mappings. Use a separate read-only mount for the source directory. Mount the directory rather than one source file so an atomic file replacement is visible. Keep both SQLite files on local storage; do not place their WAL files on a network filesystem. Source updates should write a complete temporary file and rename it into place.
 

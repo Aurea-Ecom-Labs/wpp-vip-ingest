@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deploy.deployment import Deployment, DeploymentError, IMAGE_PREFIX, readiness_summary
+from deploy.deployment import Deployment, DeploymentError, IMAGE_PREFIX, has_mode_access, readiness_summary
 
 
 SOURCE_A = 'a' * 40
@@ -164,6 +164,13 @@ class DeploymentTests(unittest.TestCase):
             'heartbeatAt': '2026-10-05T00:00:00Z',
         })
         self.assertNotIn('phone', str(summary))
+
+    def test_source_access_uses_the_configured_container_identity(self):
+        source = self.root / 'source.json'
+        source.write_text('[]', encoding='utf-8')
+        source.chmod(0o600)
+        self.assertTrue(has_mode_access(source, os.getuid(), os.getgid(), 0b100))
+        self.assertFalse(has_mode_access(source, os.getuid() + 1, os.getgid(), 0b100))
 
 
     def test_success_preserves_an_intentional_pause(self):

@@ -4,10 +4,12 @@ services:
   init-data:
     image: ${WPP_IMAGE:-wpp-vip-ingest:local}
     user: "0:0"
-    entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown -R 1000:1000 /data && chmod 700 /data"]
+    entrypoint: ["/bin/sh", "/app/docker/init-data.sh"]
     volumes:
       - wpp-data:/data
+    environment:
+      WPP_UID: ${WPP_UID:-1000}
+      WPP_GID: ${WPP_GID:-1000}
     restart: "no"
 
   worker:
@@ -18,7 +20,7 @@ services:
     depends_on:
       init-data:
         condition: service_completed_successfully
-    user: "1000:1000"
+    user: "${WPP_UID:-1000}:${WPP_GID:-1000}"
     init: true
     read_only: true
     cap_drop:
@@ -26,7 +28,7 @@ services:
     security_opt:
       - no-new-privileges:true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=1777
+      - /tmp:rw,noexec,nosuid,size=64m,uid=${WPP_UID:-1000},gid=${WPP_GID:-1000},mode=1777
     volumes:
       - wpp-data:/data
       - type: bind

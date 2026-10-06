@@ -82,6 +82,18 @@ def readiness_summary(value):
     }
 
 
+def has_mode_access(path, uid, gid, requested):
+    info = path.stat()
+    mode = info.st_mode
+    if uid == info.st_uid:
+        available = (mode >> 6) & 0b111
+    elif gid == info.st_gid:
+        available = (mode >> 3) & 0b111
+    else:
+        available = mode & 0b111
+    return available & requested == requested
+
+
 class DockerCompose:
     def __init__(self, root, runner=None, clock=time.monotonic, sleep=time.sleep):
         self.root = Path(root).resolve()
@@ -125,16 +137,23 @@ class DockerCompose:
         worker = config.get('services', {}).get('worker')
         if not worker or worker.get('image') != image:
             raise DeploymentError('Compose worker image does not match the approved digest')
+        try:
+            worker_uid, worker_gid = str(worker.get('user', '')).split(':', 1)
+            worker_uid, worker_gid = int(worker_uid), int(worker_gid)
+            if worker_uid <= 0 or worker_gid < 0:
+                raise DeploymentError('Compose worker must run as a non-root user')
+        except ValueError as error:
+            raise DeploymentError('Compose worker user must use a numeric non-root UID') from error
         mounts = worker.get('volumes', [])
         source = next((mount for mount in mounts if mount.get('target') == '/source'), None)
         data = next((mount for mount in mounts if mount.get('target') == '/data'), None)
         source_path = Path(source.get('source', '')) if source else None
         if (not source or source.get('type') != 'bind' or not source.get('read_only') or
                 not source_path or not source_path.is_dir() or
-                not os.access(source_path, os.R_OK | os.X_OK)):
+                not has_mode_access(source_path, worker_uid, worker_gid, 0b101)):
             raise DeploymentError('Read-only source directory is missing or unreadable')
         source_file = source_path / 'source.json'
-        if not source_file.is_file() or not os.access(source_file, os.R_OK):
+        if not source_file.is_file() or not has_mode_access(source_file, worker_uid, worker_gid, 0b100):
             raise DeploymentError('Configured source file is missing or unreadable')
         environment = worker.get('environment', {})
         groups = [group for group in environment.get('WPP_GROUPS', '').split(',') if group]

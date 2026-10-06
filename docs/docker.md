@@ -18,6 +18,13 @@ printf '[]\n' > source/source.json
 ```
 
 Edit `.env`. Replace the sample group and operator identifiers with approved values. Keep `WPP_IMAGE=wpp-vip-ingest:local` for a local build. The source file must contain only `phone` and `group` fields. Do not put credentials, database files, or customer source data in Git.
+Set `WPP_UID` and `WPP_GID` to a non-root container identity that can read the host source directory. On a single-user local host, export the host IDs before Compose commands:
+
+```sh
+export WPP_UID="$(id -u)" WPP_GID="$(id -g)"
+```
+
+For repeat use, store these values in `.env`. The `init-data` service uses them to set the volume owner. Do not set `WPP_UID=0`.
 
 Build and check the local image:
 
@@ -27,7 +34,7 @@ docker compose config --quiet
 npm run demo
 ```
 
-The demo uses a simulated socket. It does not connect to WhatsApp. The container runs as UID 1000. The `init-data` service sets the data volume owner before the worker starts. It does not make the files world-writable.
+The demo uses a simulated socket. It does not connect to WhatsApp. The image defaults to UID 1000; Compose runs as the configured non-root `WPP_UID`/`WPP_GID`. The `init-data` service sets the data volume owner before the worker starts. It does not make the files world-writable.
 
 ## Pair and start
 
@@ -142,12 +149,14 @@ backup_root="$HOME/wpp-vip-backups"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -m 700 -p "$backup_root"
 image="$(sed -n 's/^WPP_IMAGE=//p' .env)"
+worker_uid="$(sed -n 's/^WPP_UID=//p' .env)"
+worker_gid="$(sed -n 's/^WPP_GID=//p' .env)"
 container="wpp-backup-$stamp"
 trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
 
-docker create --name "$container" --read-only --user 1000:1000 \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=1777 \
-  --tmpfs /backup:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
+docker create --name "$container" --read-only --user "$worker_uid:$worker_gid" \
+  --tmpfs "/tmp:rw,noexec,nosuid,size=64m,uid=$worker_uid,gid=$worker_gid,mode=1777" \
+  --tmpfs "/backup:rw,noexec,nosuid,size=256m,uid=$worker_uid,gid=$worker_gid,mode=0700" \
   --volume wpp-vip-ingest_wpp-data:/data \
   --env WPP_DATA_DIR=/data \
   "$image" backup "/backup/$stamp"
@@ -164,18 +173,21 @@ To restore, use a new empty volume. Keep the old volume until the restored worke
 
 ```sh
 restore_volume="wpp-vip-ingest-restore-$stamp"
+worker_uid="$(sed -n 's/^WPP_UID=//p' .env)"
+worker_gid="$(sed -n 's/^WPP_GID=//p' .env)"
 docker volume create "$restore_volume"
 docker run --rm --read-only --user 0:0 \
+  --env WPP_UID="$worker_uid" --env WPP_GID="$worker_gid" \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --volume "$restore_volume:/data" \
   --volume "$backup_root/$stamp:/backup:ro" \
   --entrypoint /bin/sh "$image" -ec '
-    install -d -o 1000 -g 1000 -m 700 /data/auth
-    install -o 1000 -g 1000 -m 600 /backup/jobs.db /data/jobs.db
-    install -o 1000 -g 1000 -m 600 /backup/runtime-state.sqlite /data/runtime-state.sqlite
+    install -d -o "$WPP_UID" -g "$WPP_GID" -m 700 /data/auth
+    install -o "$WPP_UID" -g "$WPP_GID" -m 600 /backup/jobs.db /data/jobs.db
+    install -o "$WPP_UID" -g "$WPP_GID" -m 600 /backup/runtime-state.sqlite /data/runtime-state.sqlite
     if [ -d /backup/auth ]; then
       cp -a /backup/auth/. /data/auth/
-      chown -R 1000:1000 /data/auth
+      chown -R "$WPP_UID:$WPP_GID" /data/auth
       find /data/auth -type d -exec chmod 700 {} +
       find /data/auth -type f -exec chmod 600 {} +
     fi
@@ -208,7 +220,7 @@ sudo install -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0750 deploy/deploy-container
 sudo install -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0640 deploy/deployment.py /opt/wpp-vip-ingest/deploy/
 ```
 
-Create `/opt/wpp-vip-ingest/.env` with mode `0600`, an absolute read-only source path, the persistent volume name, approved groups/operators, and the current tested image digest. Do not copy `.env.example` unchanged to a live host. The deployment account needs access to the intended Docker runtime. Docker access can control the host; choose its privilege boundary with care. Do not expose a Docker TCP API.
+Create `/opt/wpp-vip-ingest/.env` with mode `0600`, an absolute read-only source path, the persistent volume name, approved groups/operators, a numeric non-root `WPP_UID`/`WPP_GID` that can read the source, and the current tested image digest. Do not copy `.env.example` unchanged to a live host. The deployment account needs access to the intended Docker runtime. Docker access can control the host; choose its privilege boundary with care. Do not expose a Docker TCP API.
 
 The target host name, account, Docker context, source path, and pairing state are owner settings. They are not configured by this repository. The production GitHub environment needs `WPP_DEPLOY_HOST` and `WPP_DEPLOY_USER` variables, plus `TS_FEDERATED_CLIENT_ID` and `TS_AUDIENCE` secrets. The Tailscale identity, tailnet rules, GitHub environment restrictions, package visibility, and host Docker startup are still owner setup.
 

@@ -48,6 +48,7 @@ CI is configured to build and test native amd64 and arm64 images. Simulated chec
 ```sh
 cp .env.example .env
 chmod 600 .env
+export WPP_UID="$(id -u)" WPP_GID="$(id -g)"
 mkdir -p source
 printf '[]\n' > source/source.json
 docker compose build

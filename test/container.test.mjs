@@ -50,6 +50,8 @@ function createCase(t, { mode = 'success', rows = [], timeoutMs = 30_000 } = {})
     const config = {
       WPP_IMAGE: image,
       WPP_DATA_VOLUME: `${project}-data`,
+      WPP_UID: String(process.getuid?.() ?? 1000),
+      WPP_GID: String(process.getgid?.() ?? 1000),
       WPP_GROUPS: '123456789@g.us',
       WPP_OPERATORS: '5511777777777@s.whatsapp.net',
       WPP_SOURCE_DIR: sourceDir,
@@ -149,7 +151,7 @@ if (!testsEnabled) {
     const sourceWrite = ctx.exec('node', '--input-type=module', '-e',
       "import {writeFileSync} from 'node:fs'; try { writeFileSync('/source/source.json','[]'); process.exit(2) } catch (error) { if (error.code === 'EROFS') process.exit(0); process.exit(1) }");
     assert.equal(sourceWrite.status, 0, sourceWrite.stderr);
-    assert.equal(ctx.composeOk('exec', '-T', 'worker', 'node', '-p', 'process.getuid()'), '1000');
+    assert.equal(ctx.composeOk('exec', '-T', 'worker', 'node', '-p', 'process.getuid()'), String(process.getuid?.() ?? 1000));
     assert.deepEqual(JSON.parse(ctx.composeOk('exec', '-T', 'worker', 'node', '--input-type=module', '-e',
       "import {existsSync} from 'node:fs'; process.stdout.write(JSON.stringify(['/app/.env','/app/data','/app/auth','/app/source'].map(existsSync)))")),
     [false, false, false, false]);
