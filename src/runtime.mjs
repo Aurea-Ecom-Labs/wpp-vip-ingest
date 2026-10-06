@@ -134,10 +134,7 @@ export class WorkerRuntime {
       }
     } catch {
       if (!this.stopping) {
-        this.lifecycle = 'failed';
-        this.onOutput({ event: 'runtime_failed' });
-        this.publishStatus();
-        await this.waitUntilStopped();
+        this.fail('runtime_failed', 'Worker runtime failed');
       } else if (!this.failure) {
         this.failure = new Error('Runtime failed during shutdown');
       }
@@ -161,7 +158,7 @@ export class WorkerRuntime {
         this.publishStatus();
         return false;
       }
-      this.fail('transport_connect_failed');
+      this.fail('transport_connect_failed', 'Transport connection failed');
       return false;
     }
 
@@ -250,14 +247,14 @@ export class WorkerRuntime {
       this.lifecycle = 'needs_pairing';
       this.publishStatus();
     } else {
-      this.fail('transport_disconnected');
+      this.fail('transport_disconnected', 'Transport connection failed');
     }
     if (this.session) void this.closeSession();
   }
 
-  fail(event) {
-    this.onOutput({ event });
-    this.stop(new Error('Transport connection failed'));
+  fail(event, message) {
+    try { this.onOutput({ event }); } catch { }
+    this.stop(new Error(message));
   }
 
   async closeSession() {
@@ -297,14 +294,14 @@ export class WorkerRuntime {
     this.stopRequestedAt = this.clock();
     this.forceExitTimer = this.timers.setTimeout(() => this.onDrainTimeout(), this.shutdownLimitMs);
     this.lifecycle = failure ? 'failed' : 'draining';
-    this.publishStatus();
+    try { this.publishStatus(); } catch { }
     this.pendingWake?.();
   }
 
   async shutdown() {
     this.lifecycle = 'draining';
-    this.publishStatus();
     if (this.heartbeatTimer) this.timers.clearInterval(this.heartbeatTimer);
+    try { this.publishStatus(); } catch { }
     const deadline = (this.stopRequestedAt ?? this.clock()) + this.shutdownLimitMs;
     const awaitBeforeDeadline = async promise => {
       const remaining = Math.max(0, deadline - this.clock());
