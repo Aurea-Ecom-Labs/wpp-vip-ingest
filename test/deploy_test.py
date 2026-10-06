@@ -129,6 +129,7 @@ class FakeDocker:
     def resume(self):
         self.events.append(('resume', self.running))
         self.admission = 'resumed'
+        return self.status()
 
 
 class DeploymentTests(unittest.TestCase):

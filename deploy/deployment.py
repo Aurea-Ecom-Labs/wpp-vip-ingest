@@ -316,7 +316,15 @@ class DockerCompose:
         raise DeploymentError('Candidate readiness timed out')
 
     def resume(self):
-        self.compose('exec', '-T', 'worker', 'node', 'src/cli.mjs', 'resume', timeout=30)
+        raw = self.compose('exec', '-T', 'worker', 'node', 'src/cli.mjs', 'resume', timeout=30)
+        try:
+            value = json.loads(raw.splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as error:
+            raise DeploymentError('Resume acknowledgement is invalid') from error
+        if (value.get('admission') != 'resumed' or value.get('lifecycle') != 'ready' or
+                value.get('session') != 'active'):
+            raise DeploymentError('Worker did not confirm resume')
+        return value
 
 
 class Deployment:
@@ -525,10 +533,9 @@ class Deployment:
                 self._save(transaction)
 
                 if transaction.get('previousMode') == 'resumed':
-                    self.docker.resume()
-                    status = self.docker.status()
-                    if not status or status.get('control', {}).get('admission') != 'resumed':
-                        raise DeploymentError('Candidate did not confirm the previous resumed mode')
+                    transaction['phase'] = 'resuming_candidate'
+                    self._save(transaction)
+                    status = self.docker.resume()
                     transaction['readiness'] = readiness_summary(status)
                 transaction['phase'] = 'completed'
                 transaction['outcome'] = 'completed'
