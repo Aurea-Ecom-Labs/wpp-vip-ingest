@@ -1,12 +1,12 @@
 # Implementation handoff: Docker, CI, and private deployment
 
-Status: CODE IMPLEMENTATION IN FEATURE BRANCH; ACCEPTANCE AND OWNER SETUP INCOMPLETE. Date: 2026-10-05.
+Status: CODE AND NATIVE CONTAINER CI COMPLETE; OWNER/LIVE ACCEPTANCE INCOMPLETE. Date: 2026-10-06.
 
 The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d687d2`. The plan's `c9fd452` is an earlier prototype commit already included in that baseline. The baseline working tree was clean. All 31 baseline tests passed on Node.js `v25.9.0`.
 
-This branch is `feat/docker-ci-deployment`. The worker/container/transaction implementation is in `f81d25c`; CI/publish/deploy workflows are in `ef0baf8`; follow-up fixes are in `0573117`, `c54ccd7`, `a5dfca8`, `1c48deb`, `3623a55`, `c5e5add`, `28757e2`, `36a2b28`, `c063d03`, and `d2c55fe`. Documentation commits are `b333435`, `c26ee8c`, `94d40d2`, `489d317`, `c5e5add`, `b9d6690`, `9ab6c17`, and `d2c55fe`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No remote configuration, package publish, tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
+This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37403970507` passed the native amd64 and arm64 container jobs for commit `291f66f`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 20 tests. The pinned Baileys import succeeds. Container builds and lifecycle tests remain unverified locally: Docker CLI `29.5.3` is present, but the Docker daemon and Compose plugin are unavailable. CI must pass on both native CPU runners before container acceptance is complete.
+Local `npm test` passes 48 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37403970507`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -42,7 +42,7 @@ Acceptance: baseline reproduced; external unknowns listed; no production operati
 
 ## Phase 1: extract a testable worker lifecycle
 
-**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, and bounded shutdown. Container acceptance remains pending.
+**Code status:** implemented in `src/runtime.mjs`, `src/runtime-state.mjs`, `src/cli.mjs`, and tests. Local tests cover persistent pause, invalid resume, stale health, logout before ready, pause during an attempt, repeated signals, and bounded shutdown. Native container CI passed in PR run `37403970507`.
 
 Expected files: new `src/runtime.mjs` and `src/runtime-state.mjs`; refactor `src/cli.mjs`; update `src/baileys.mjs` and tests. Final names may differ if documented.
 
@@ -58,7 +58,7 @@ Acceptance: tests cover pause during a running operation, no new claim after pau
 
 ## Phase 2: session ownership and logout
 
-**Code status:** Linux Compose commands use one stable `flock` file. Native live operation is retired; launchd instructions and installer are marked deprecated. Fake tests cover logout persistence and replacement. Forced-kill and competing-owner container tests are written but not yet run.
+**Code status:** Linux Compose commands use one stable `flock` file. Native live operation is retired; launchd instructions and installer are marked deprecated. Native container CI passed logout persistence, forced-kill recovery, and competing-owner tests. No live logout or pairing was run.
 
 Replace the directory-only lock with an OS-managed exclusive advisory lock on a stable file in the shared local data volume. On Linux containers, an entry wrapper can use `flock` for the full live process lifetime. Every command that opens Baileys must use the same lock. Do not unlink the locked file. OS release on process death removes the stale-directory problem. Do not use PID existence alone: container PID namespaces and PID reuse make that unsafe.
 
@@ -70,7 +70,7 @@ Acceptance: two live owners cannot start against one volume; forced kill release
 
 ## Phase 3: container package and Compose
 
-**Code status:** Dockerfile, Compose configuration, entry wrapper, `.env.example`, ignore rules, and `docs/docker.md` are present. Node 24 Debian base digest is pinned. Builds, non-root volume writes, and architecture imports remain pending container CI.
+**Code status:** Dockerfile, Compose configuration, entry wrapper, `.env.example`, ignore rules, and `docs/docker.md` are present. Node 24 Debian base digest is pinned. Run `37403970507` passed native amd64/arm64 builds, Baileys imports, Compose validation, non-root writes, and source mount checks. macOS Docker Desktop remains an owner trial.
 
 Add `Dockerfile`, `.dockerignore`, `compose.yaml`, a container entry wrapper, `.env.example`, and `docs/docker.md`.
 
@@ -86,7 +86,7 @@ Acceptance: clean build on both architectures; non-root write access; Baileys im
 
 ## Phase 4: container behavior tests
 
-**Code status:** explicit fake transport and container lifecycle tests are present. They cover the planned synthetic cases with Docker containers. This host cannot run them; both native CI results are required. No CI artifact has been produced yet.
+**Code status:** explicit fake transport and container lifecycle tests are present. Run `37403970507` passed the synthetic lifecycle cases inside native amd64 and arm64 containers and uploaded test records/logs. The local host still cannot run Docker containers.
 
 Add a fake transport entry point that exercises the real worker lifecycle and SQLite without contacting WhatsApp. The live transport remains the default; tests select the fake explicitly. CI must never silently fall back from a failed live transport to simulation.
 
@@ -98,7 +98,7 @@ Acceptance: results test behavior and observable records, not only file syntax. 
 
 ## Phase 5: CI and image publication
 
-**Code status:** read-only PR workflow and trusted-main publish workflow are present. Actions use commit SHA references. The publish workflow tests each pushed platform digest before manifest assembly and requests provenance/SBOM. No workflow has run, no image has been published, and GHCR package linkage, public visibility, and anonymous pull remain unverified.
+**Code status:** the read-only PR workflow passed in run `37403970507`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
 
 Extend or replace `.github/workflows/test.yml`. Add a publish workflow. Pin external actions to reviewed commit SHAs. Use minimum job permissions.
 
@@ -112,7 +112,7 @@ Acceptance: untrusted PR cannot publish or join tailnet; both platform images te
 
 ## Phase 6: server deployment transaction
 
-**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. Twenty local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. Twenty-one local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, container identity/source access, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
