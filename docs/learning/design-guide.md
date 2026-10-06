@@ -2,7 +2,7 @@
 
 Design date: 2026-10-05. Main baseline before implementation: `d0be25e` (includes the prototype at `c9fd452`).
 
-This is teaching documentation. It explains what each module does and how the modules work together. The worker lifecycle, Docker files, CI workflows, and deployment scripts are implemented in this branch. Their local container acceptance and all owner infrastructure setup are still unverified. Read [the implementation plan](implementation-plan.md) and [identity and deployment](identity-and-deployment.md) for remaining evidence.
+This is teaching documentation. It explains what each module does and how the modules work together. The worker lifecycle, Docker files, CI workflows, and deployment scripts are implemented in this branch. Native amd64 and arm64 container CI passed in run `37404969806`; local Docker Desktop and all owner infrastructure setup remain unverified. Read [the implementation plan](implementation-plan.md) and [identity and deployment](identity-and-deployment.md) for remaining evidence.
 
 ## 1. Start with the business boundary
 
@@ -50,7 +50,7 @@ The account must be a group admin. An allowed command operator must also be a gr
   invite_required -> no invite, no automatic retry
 ```
 
-The tests cover admission outcomes, SQLite, PN/LID resolution, pause/resume, lifecycle recovery, backup permissions, and deployment transactions. Container tests run the fake transport and SQLite inside the built image. The workflow targets native amd64 and arm64 runners. Local container evidence is still pending because this development host has no running Docker daemon or Compose plugin. No test proves live WhatsApp behavior.
+The tests cover admission outcomes, SQLite, PN/LID resolution, pause/resume, lifecycle recovery, backup permissions, and deployment transactions. Container tests run the fake transport and SQLite inside the built image. PR run `37404969806` passed these tests on native amd64 and arm64 runners. This development host has no running Docker daemon or Compose plugin. No test proves live WhatsApp behavior.
 
 ### Current gaps that matter for containers
 
@@ -60,7 +60,7 @@ Shutdown blocks new claims and command work, then drains active operations and c
 
 Logout writes `needs_pairing` and pauses admission. A worker with that marker stays alive and does not reconnect or generate a QR. Explicit pairing uses the same lock and volume.
 
-The code now has local health/readiness snapshots, pause/resume commands, Docker packaging, Compose, container lifecycle tests, GHCR workflows, a deployment transaction, and a manual Tailscale deploy workflow. Docker builds and live owner configuration have not been verified here. File-based Baileys auth remains a trial choice; durable credential and Signal-key storage remains separate production work.
+The code now has local health/readiness snapshots, pause/resume commands, Docker packaging, Compose, container lifecycle tests, GHCR workflows, a deployment transaction, and a manual Tailscale deploy workflow. Native CI Docker builds and container tests passed. Live owner configuration has not been verified. File-based Baileys auth remains a trial choice; durable credential and Signal-key storage remains separate production work.
 
 ## 3. Compose worker image
 
