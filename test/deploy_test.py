@@ -22,6 +22,9 @@ class FakeDocker:
         self.admission = 'paused'
         self.job_counts = {'uncertain': 0, 'in_flight': 0}
         self.fail_readiness = set()
+        self.fail_pause_number = None
+        self.pause_count = 0
+        self.fail_persist_pause = False
         self.fail_pull = False
         self.fail_start = set()
         self.crash_after_start = False
@@ -82,7 +85,16 @@ class FakeDocker:
         }
 
     def pause(self):
+        self.pause_count += 1
         self.events.append(('pause', self.running))
+        if self.pause_count == self.fail_pause_number:
+            raise DeploymentError('Pause command failed')
+        self.admission = 'paused'
+
+    def persist_pause_stopped(self):
+        self.events.append(('persist_pause_stopped', self.running))
+        if self.fail_persist_pause:
+            raise DeploymentError('Stopped pause command failed')
         self.admission = 'paused'
 
     def stop(self):
@@ -141,6 +153,7 @@ class DeploymentTests(unittest.TestCase):
             'lifecycle': 'ready',
             'session': 'active',
             'admission': 'paused',
+            'processCurrent': False,
             'heartbeatAt': '2026-10-05T00:00:00Z',
         })
         self.assertNotIn('phone', str(summary))
@@ -189,6 +202,35 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
         self.assertEqual(self.docker.admission, 'paused')
         self.assertNotIn(('resume', f'{IMAGE_PREFIX}@{DIGEST_A}'), self.docker.events)
+
+    def test_rollback_retries_persisted_pause_before_restoring_previous_image(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.admission = 'resumed'
+        self.docker.add_image(DIGEST_B, SOURCE_B, 2)
+        self.docker.fail_readiness.add(f'{IMAGE_PREFIX}@{DIGEST_B}')
+        self.docker.fail_pause_number = 2
+        with self.assertRaisesRegex(DeploymentError, 'Candidate readiness'):
+            self.deploy(DIGEST_B, SOURCE_B, 2)
+        events = [name for name, _ in self.docker.events]
+        last_stop = max(index for index, name in enumerate(events) if name == 'stop')
+        restored_start = next(index for index, name in enumerate(events) if name == 'start' and index > last_stop)
+        self.assertLess(events.index('persist_pause_stopped'), restored_start)
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
+        self.assertEqual(self.docker.admission, 'paused')
+
+    def test_does_not_restore_previous_image_if_persisted_pause_fails(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.admission = 'resumed'
+        self.docker.add_image(DIGEST_B, SOURCE_B, 2)
+        self.docker.fail_readiness.add(f'{IMAGE_PREFIX}@{DIGEST_B}')
+        self.docker.fail_pause_number = 2
+        self.docker.fail_persist_pause = True
+        with self.assertRaisesRegex(DeploymentError, 'Candidate readiness'):
+            self.deploy(DIGEST_B, SOURCE_B, 2)
+        self.assertIsNone(self.docker.running)
+        self.assertEqual(self.docker.events.count(('start', f'{IMAGE_PREFIX}@{DIGEST_A}')), 1)
 
     def test_schema_mismatch_fails_before_pause_or_stop(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)

@@ -77,6 +77,7 @@ def readiness_summary(value):
         'lifecycle': lifecycle if lifecycle in LIFECYCLE_STATES else 'unknown',
         'session': session if session in {'active', 'needs_pairing'} else 'unknown',
         'admission': admission if admission in {'paused', 'resumed'} else 'unknown',
+        'processCurrent': value.get('processCurrent') is True,
         'heartbeatAt': snapshot.get('heartbeatAt') if isinstance(snapshot.get('heartbeatAt'), str) else None,
     }
 
@@ -96,7 +97,12 @@ class DockerCompose:
         environment = os.environ.copy()
         if image:
             environment['WPP_IMAGE'] = image
-        result = self.runner(command, environment, timeout=timeout)
+        try:
+            result = self.runner(command, environment, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            raise DeploymentError('Docker operation timed out') from error
+        except OSError as error:
+            raise DeploymentError('Docker command is unavailable') from error
         if result.returncode != 0:
             raise DeploymentError(f'Command failed ({Path(command[0]).name}, exit {result.returncode})')
         return result.stdout.strip()
@@ -214,10 +220,15 @@ class DockerCompose:
         return f'{jobs}:{runtime}' if jobs and runtime else ''
 
     def label(self, image, label):
-        return self.run([
+        raw = self.run([
             'docker', 'image', 'inspect', '--format',
-            f'{{{{ index .Config.Labels "{label}" }}}}', image,
+            '{{json .Config.Labels}}', image,
         ])
+        try:
+            labels = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise DeploymentError('Image labels are invalid JSON') from error
+        return labels.get(label, '') if isinstance(labels, dict) else ''
 
     def running_image(self):
         container = self.compose('ps', '-q', 'worker')
@@ -248,6 +259,15 @@ class DockerCompose:
             raise DeploymentError('Pause acknowledgement is invalid') from error
         if value.get('admission') != 'paused' or value.get('drain') not in ('drained', 'worker_not_running'):
             raise DeploymentError('Worker did not confirm a paused, drained state')
+
+    def persist_pause_stopped(self):
+        result = self.compose('run', '--rm', 'worker', 'pause', timeout=90)
+        try:
+            value = json.loads(result.splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as error:
+            raise DeploymentError('Stopped worker did not confirm persisted pause') from error
+        if value.get('admission') != 'paused' or value.get('drain') not in ('drained', 'worker_not_running'):
+            raise DeploymentError('Stopped worker did not confirm persisted pause')
 
     def stop(self):
         self.compose('stop', '-t', '60', 'worker', timeout=75)
@@ -322,7 +342,6 @@ class Deployment:
             'publishRunNumber': run_number,
             'rollbackRequested': rollback,
             'previousDigest': previous_digest,
-            'previousConfiguredImage': self.docker.configured_image(),
             'previousMode': previous_mode,
             'previousSchema': self.docker.schema(f'{IMAGE_PREFIX}@{previous_digest}') if previous_digest else None,
             'candidateSchema': None,
@@ -344,6 +363,9 @@ class Deployment:
                 transaction['phase'] = 'rollback_stopping_candidate'
                 self._save(transaction)
                 self.docker.stop()
+            transaction['phase'] = 'rollback_confirming_persisted_pause'
+            self._save(transaction)
+            self.docker.persist_pause_stopped()
             previous = transaction.get('previousDigest')
             compatible = (previous and DIGEST_RE.fullmatch(previous) and
                           transaction.get('previousSchema') and
