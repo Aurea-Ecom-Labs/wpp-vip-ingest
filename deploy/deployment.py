@@ -156,6 +156,8 @@ class DockerCompose:
         if not source_file.is_file() or not has_mode_access(source_file, worker_uid, worker_gid, 0b100):
             raise DeploymentError('Configured source file is missing or unreadable')
         environment = worker.get('environment', {})
+        if environment.get('WPP_TRANSPORT') != 'live' or worker.get('command') != ['worker']:
+            raise DeploymentError('Production worker must use the live transport and the plain worker command')
         groups = [group for group in environment.get('WPP_GROUPS', '').split(',') if group]
         if not groups or any(not re.fullmatch(r'\d[\d-]*@g\.us', group) for group in groups):
             raise DeploymentError('Configured allowed groups are invalid')
