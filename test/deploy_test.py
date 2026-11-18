@@ -2,10 +2,15 @@ import fcntl
 import os
 import subprocess
 import tempfile
+import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
-from deploy.deployment import Deployment, DeploymentError, IMAGE_PREFIX, has_mode_access, readiness_summary
+from deploy.deployment import (
+    Deployment, DeploymentError, DockerCompose, IMAGE_PREFIX, has_mode_access, readiness_summary,
+)
 
 
 SOURCE_A = 'a' * 40
@@ -20,9 +25,11 @@ class FakeDocker:
         self.running = None
         self.configured = f'{IMAGE_PREFIX}@{DIGEST_A}'
         self.admission = 'paused'
+        self.session = 'active'
         self.job_counts = {'uncertain': 0, 'in_flight': 0}
         self.fail_readiness = set()
         self.fail_pause_number = None
+        self.interrupt_pause_number = None
         self.pause_count = 0
         self.fail_persist_pause_number = None
         self.persist_pause_count = 0
@@ -78,8 +85,11 @@ class FakeDocker:
         if not self.running:
             return None
         return {
-            'control': {'admission': self.admission, 'session': 'active'},
-            'status': {'lifecycle': 'ready', 'session': 'active'},
+            'control': {'admission': self.admission, 'session': self.session},
+            'status': {
+                'lifecycle': 'ready' if self.session == 'active' else 'needs_pairing',
+                'session': self.session,
+            },
             'health': {'healthy': True},
             'processCurrent': True,
             'jobCounts': dict(self.job_counts),
@@ -95,6 +105,8 @@ class FakeDocker:
     def pause(self):
         self.pause_count += 1
         self.events.append(('pause', self.running))
+        if self.pause_count == self.interrupt_pause_number:
+            raise KeyboardInterrupt('synthetic lost response during pause')
         if self.pause_count == self.fail_pause_number:
             raise DeploymentError('Pause command failed')
         self.admission = 'paused'
@@ -323,10 +335,74 @@ class DeploymentTests(unittest.TestCase):
     def test_completed_transaction_is_idempotent(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 1)
         self.deploy(DIGEST_A, SOURCE_A, 1)
-        event_count = len(self.docker.events)
+        self.docker.events.clear()
         result = self.deploy(DIGEST_A, SOURCE_A, 1)
         self.assertTrue(result['idempotent'])
-        self.assertEqual(len(self.docker.events), event_count)
+        names = [name for name, _ in self.docker.events]
+        self.assertFalse({'pause', 'stop', 'start', 'configure'} & set(names))
+
+    def test_completed_release_is_reapplied_when_its_worker_stopped(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.admission = 'resumed'
+        self.docker.running = None
+        self.docker.events.clear()
+        result = self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.assertFalse(result.get('idempotent', False))
+        self.assertEqual(result['outcome'], 'completed')
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
+        self.assertIn(('start', f'{IMAGE_PREFIX}@{DIGEST_A}'), self.docker.events)
+        self.assertEqual(self.docker.admission, 'resumed')
+
+    def test_completed_release_is_reapplied_when_worker_runs_another_image(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.docker.add_image(DIGEST_B, SOURCE_B, 2)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.running = f'{IMAGE_PREFIX}@{DIGEST_B}'
+        result = self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.assertFalse(result.get('idempotent', False))
+        self.assertEqual(result['outcome'], 'completed')
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
+
+    def test_completed_release_that_is_not_ready_fails_without_replay(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.session = 'needs_pairing'
+        self.docker.events.clear()
+        with self.assertRaisesRegex(DeploymentError, 'not ready'):
+            self.deploy(DIGEST_A, SOURCE_A, 1)
+        names = [name for name, _ in self.docker.events]
+        self.assertFalse({'pause', 'stop', 'start', 'configure'} & set(names))
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
+
+    def test_failed_initial_pause_leaves_the_old_worker_running(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.admission = 'resumed'
+        self.docker.add_image(DIGEST_B, SOURCE_B, 2)
+        self.docker.fail_pause_number = 1
+        self.docker.events.clear()
+        with self.assertRaisesRegex(DeploymentError, 'Pause command failed'):
+            self.deploy(DIGEST_B, SOURCE_B, 2)
+        names = [name for name, _ in self.docker.events]
+        self.assertNotIn('stop', names)
+        self.assertNotIn('start', names)
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
+        self.assertEqual(self.docker.configured, f'{IMAGE_PREFIX}@{DIGEST_A}')
+
+    def test_recovered_transaction_with_failed_pause_leaves_the_old_worker_running(self):
+        self.docker.add_image(DIGEST_A, SOURCE_A, 1)
+        self.deploy(DIGEST_A, SOURCE_A, 1)
+        self.docker.add_image(DIGEST_B, SOURCE_B, 2)
+        self.docker.interrupt_pause_number = 1
+        with self.assertRaises(KeyboardInterrupt):
+            self.deploy(DIGEST_B, SOURCE_B, 2)
+        self.docker.fail_pause_number = 2
+        self.docker.events.clear()
+        with self.assertRaisesRegex(DeploymentError, 'Pause command failed'):
+            self.deploy(DIGEST_B, SOURCE_B, 2)
+        self.assertNotIn('stop', [name for name, _ in self.docker.events])
+        self.assertEqual(self.docker.running, f'{IMAGE_PREFIX}@{DIGEST_A}')
 
     def test_older_release_needs_explicit_rollback(self):
         self.docker.add_image(DIGEST_A, SOURCE_A, 5)
@@ -345,6 +421,61 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(DeploymentError, 'host lock'):
                 self.deploy(DIGEST_A, SOURCE_A, 1)
         self.assertEqual(self.docker.events, [])
+
+
+class CandidateValidationTests(unittest.TestCase):
+    IMAGE = f'{IMAGE_PREFIX}@{DIGEST_A}'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='wpp-validate-test-')
+        self.root = Path(self.temp.name)
+        self.root.chmod(0o755)
+        (self.root / '.env').write_text(f'WPP_IMAGE={self.IMAGE}\n', encoding='utf-8')
+        self.source = self.root / 'source'
+        self.source.mkdir(mode=0o755)
+        (self.source / 'source.json').write_text('[]\n', encoding='utf-8')
+        (self.source / 'source.json').chmod(0o644)
+        self.worker = {
+            'image': self.IMAGE,
+            'user': '1000:1000',
+            'command': ['worker'],
+            'environment': {'WPP_GROUPS': '123456789@g.us', 'WPP_TRANSPORT': 'live'},
+            'volumes': [
+                {'type': 'volume', 'source': 'wpp-data', 'target': '/data'},
+                {'type': 'bind', 'source': str(self.source), 'target': '/source', 'read_only': True},
+            ],
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def runner(self, command, environment, timeout=180):
+        output = ''
+        if command[:2] == ['docker', 'compose'] and 'config' in command:
+            output = json.dumps({'services': {'worker': self.worker}})
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    def validate(self):
+        with mock.patch.dict(os.environ, {'WPP_MIN_FREE_BYTES': '0'}):
+            DockerCompose(self.root, runner=self.runner).validate_candidate(self.IMAGE)
+
+    def test_accepts_the_live_worker(self):
+        self.validate()
+
+    def test_rejects_the_fake_transport_in_the_environment(self):
+        self.worker['environment']['WPP_TRANSPORT'] = 'fake'
+        with self.assertRaisesRegex(DeploymentError, 'live transport'):
+            self.validate()
+
+    def test_rejects_a_missing_transport_setting(self):
+        del self.worker['environment']['WPP_TRANSPORT']
+        with self.assertRaisesRegex(DeploymentError, 'live transport'):
+            self.validate()
+
+    def test_rejects_a_command_that_overrides_the_transport(self):
+        self.worker['command'] = ['worker', '--transport=fake']
+        with self.assertRaisesRegex(DeploymentError, 'live transport'):
+            self.validate()
 
 
 class TailscaleCommandTests(unittest.TestCase):
