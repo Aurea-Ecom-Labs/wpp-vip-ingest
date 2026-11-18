@@ -204,7 +204,7 @@ Production Compose configuration must use the public GHCR image by digest, not b
 WPP_IMAGE=ghcr.io/aurea-ecom-labs/wpp-vip-ingest@sha256:<64 lowercase hex characters>
 ```
 
-The deploy workflow selects only a digest from a successful trusted `main` publish record. It does not accept a caller-supplied image name. The host script validates the digest, image labels, schema, runtime, source mount, and free space. It serializes deployment with a stable host lock and stores transaction state outside the image under `state/deployment.json`. When no worker is running, it runs `init-data` on the configured volume before the candidate starts.
+The deploy workflow selects only a digest from a successful trusted `main` publish record. It does not accept a caller-supplied image name. The host script validates the digest, image labels, schema, runtime, source mount, and free space. It refuses a worker that does not use the live transport and the plain `worker` command. It serializes deployment with a stable host lock and stores transaction state outside the image under `state/deployment.json`. When no worker is running, it runs `init-data` on the configured volume before the candidate starts.
 
 After the owner chooses and verifies a non-root deployment account, install the same reviewed commit under the fixed path. Replace `DEPLOY_USER` with that configured account:
 
@@ -228,7 +228,7 @@ The first cutover needs a stopped LaunchAgent, a consistent backup, a paused rep
 
 ## Build and test both CPUs
 
-The pull request workflow uses native amd64 and arm64 GitHub runners. It runs unit/CLI tests, deployment transaction tests, Docker builds, a Baileys import, Compose validation, and lifecycle tests inside the built image. The publish workflow pushes a platform image, pulls and tests that exact digest, then assembles the multi-platform tag only after both platform jobs pass. BuildKit produces provenance and an SBOM. `npm audit` checks locked npm dependencies; it is not a claim that the OS image has no vulnerabilities. Review vulnerability reports and update the pinned base digest when required.
+The pull request workflow uses native amd64 and arm64 GitHub runners. It runs unit/CLI tests, deployment transaction tests, Docker builds, a Baileys import, Compose validation, and lifecycle tests inside the built image. The publish workflow first calls the full Tests workflow. It then pushes a platform image, pulls and tests that exact digest, then assembles the multi-platform tag only after both platform jobs pass. BuildKit produces provenance and an SBOM. `npm audit` checks locked npm dependencies; it is not a claim that the OS image has no vulnerabilities. Review vulnerability reports and update the pinned base digest when required.
 
 The local test command skips container tests when Docker is not available. Run all container tests with an image and a running Compose v2 daemon:
 
@@ -244,6 +244,8 @@ This does not replace the separate macOS Docker Desktop trial or live account co
 - Given a pause during an active attempt, when the attempt drains, then no next job is claimed and the pause remains after restart.
 - Given logout, when the worker restarts, then it stays healthy in `needs_pairing` without opening another session or showing a QR.
 - Given a deployment failure, when the host restores a compatible image, then it keeps the same volume and job database and leaves admission paused.
+- Given a pause that does not drain before replacement, when the deployment fails, then the old worker keeps running with admission paused.
+- Given a repeated dispatch of a completed release, when that worker is stopped or runs another image, then the host applies the release again. When the worker runs the release but is not ready, the deployment fails without a restart.
 - Given an uncertain result, when a container restarts, then the worker does not repeat the addition.
 
 ## Verification status

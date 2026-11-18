@@ -6,7 +6,7 @@ The remote `main` baseline for this work is `d0be25e44fb231817999658b930f430b95d
 
 This branch is `feat/docker-ci-deployment`, in [PR #1](https://github.com/Aurea-Ecom-Labs/wpp-vip-ingest/pull/1). GitHub run `37416858418` passed the native amd64 and arm64 container jobs for commit `99ba78b`. Native live execution is retired by owner decision; local fake tests remain native. The selected package path is public GHCR, but package settings are not verified. No image was published. No tailnet join, SSH operation, server change, pairing, or live WhatsApp operation was performed.
 
-Local `npm test` passes 49 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 21 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37416858418`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
+Local `npm test` passes 49 tests, with one container test file skipped because no image was set. `npm run test:deploy` passes 30 tests. The pinned Baileys import succeeds. Native amd64/arm64 container tests passed in GitHub run `37416858418`. This host has Docker CLI `29.5.3` but no running daemon or Compose plugin. macOS Docker Desktop and live/remote acceptance remain open.
 
 Read `design-guide.md` and `identity-and-deployment.md` first. This plan is for a coding agent and the infrastructure owner. Complete one phase at a time. Do not report remote configuration or live behavior as verified without evidence.
 
@@ -98,7 +98,7 @@ Acceptance: results test behavior and observable records, not only file syntax. 
 
 ## Phase 5: CI and image publication
 
-**Code status:** the read-only PR workflow passed in run `37416858418`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
+**Code status:** the read-only PR workflow passed in run `37416858418`; the trusted-main publish workflow has not run. Actions use commit SHA references. The publish workflow requires the full Tests workflow to pass, then tests each platform digest before manifest assembly and requests provenance/SBOM. No image has been published. GHCR linkage, public visibility, and anonymous pull remain unverified.
 
 Extend or replace `.github/workflows/test.yml`. Add a publish workflow. Pin external actions to reviewed commit SHAs. Use minimum job permissions.
 
@@ -112,7 +112,7 @@ Acceptance: untrusted PR cannot publish or join tailnet; both platform images te
 
 ## Phase 6: server deployment transaction
 
-**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. Twenty-one local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, container identity/source access, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
+**Code status:** fixed host scripts and fake Docker/Tailscale adapters are present. The transaction reads persisted mode when no worker is running, initializes the volume, and writes a paused state before candidate start. If rollback cannot confirm pause, it leaves all workers stopped. A failed pre-deployment pause leaves the old worker running and paused. A completed release counts as idempotent only while its image runs and is ready. Validation refuses the fake transport. Thirty local tests cover digest validation, ordering, schema mismatch, pause preservation, rollback, host serialization, interrupted recovery, preflight failure, idempotency, container identity/source access, safe remote arguments, the fixed remote command, and readiness summaries. The deploy status output includes sanitized readiness. No host Compose or Tailscale integration trial has run.
 
 Add `deploy/deploy-container.sh`, `deploy/deployment-status.sh`, and tests. Install reviewed scripts and trusted Compose configuration at a fixed host location. Prefer a fixed server-side script over arbitrary remote shell assembled by CI. Define the deployment account's real privilege boundary; Docker access is powerful. Do not expose a remote Docker TCP API.
 
