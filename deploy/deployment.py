@@ -82,6 +82,13 @@ def readiness_summary(value):
     }
 
 
+def worker_ready(status):
+    return ((status.get('status') or {}).get('lifecycle') == 'ready' and
+            status.get('control', {}).get('session') == 'active' and
+            status.get('health', {}).get('healthy') is True and
+            status.get('processCurrent') is True)
+
+
 def has_mode_access(path, uid, gid, requested):
     info = path.stat()
     mode = info.st_mode
@@ -392,6 +399,15 @@ class Deployment:
             'updatedAt': timestamp(),
         }
 
+    def _completed_release_is_running(self, digest):
+        if self.docker.running_image() != f'{IMAGE_PREFIX}@{digest}':
+            return False
+        status = self.docker.wait_ready()
+        if not worker_ready(status):
+            summary = json.dumps(readiness_summary(status), sort_keys=True)
+            raise DeploymentError(f'Completed release is running but not ready {summary}; inspect deployment-status')
+        return True
+
     def _rollback(self, transaction, disrupted):
         if not disrupted:
             return
@@ -448,7 +464,8 @@ class Deployment:
                 disrupted = transaction.get('phase') not in ('validating', 'candidate_pulled', 'pausing_old_worker')
             elif (prior and prior.get('outcome') == 'completed' and
                   prior.get('candidateDigest') == digest and prior.get('sourceSha') == source_sha and
-                  prior.get('publishRunNumber') == run_number):
+                  prior.get('publishRunNumber') == run_number and
+                  self._completed_release_is_running(digest)):
                 return {**prior, 'idempotent': True}
             else:
                 transaction = self._new_transaction(digest, source_sha, run_number, rollback, prior)
@@ -543,10 +560,7 @@ class Deployment:
                 transaction['phase'] = 'candidate_started'
                 self._save(transaction)
                 status = self.docker.wait_ready()
-                snapshot = status.get('status') or {}
-                if (snapshot.get('lifecycle') != 'ready' or
-                        status.get('control', {}).get('session') != 'active' or
-                        not status.get('health', {}).get('healthy')):
+                if not worker_ready(status):
                     raise DeploymentError('Candidate is not ready; pairing may be required')
                 transaction['readiness'] = readiness_summary(status)
                 transaction['phase'] = 'candidate_verified'
