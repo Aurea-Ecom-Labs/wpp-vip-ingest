@@ -445,7 +445,7 @@ class Deployment:
                         prior.get('publishRunNumber') != run_number):
                     raise DeploymentError('An earlier transaction is incomplete; inspect deployment-status first')
                 transaction = prior
-                disrupted = transaction.get('phase') not in ('validating', 'candidate_pulled')
+                disrupted = transaction.get('phase') not in ('validating', 'candidate_pulled', 'pausing_old_worker')
             elif (prior and prior.get('outcome') == 'completed' and
                   prior.get('candidateDigest') == digest and prior.get('sourceSha') == source_sha and
                   prior.get('publishRunNumber') == run_number):
@@ -496,7 +496,6 @@ class Deployment:
                     if status:
                         transaction['phase'] = 'pausing_old_worker'
                         self._save(transaction)
-                        disrupted = True
                         self.docker.pause()
                         status = self.docker.status()
                         if (not status or status.get('control', {}).get('admission') != 'paused' or
